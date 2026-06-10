@@ -80,11 +80,17 @@ class PdfProvider(BaseProvider):
         bool,
         "Whether to keep character-level information in the output.",
     ] = False
+    cache_pdftext_pages: Annotated[
+        bool,
+        "Cache the raw pdftext pages so table cell text can be assigned",
+        "without re-extracting the PDF. Increases memory usage.",
+    ] = True
 
     def __init__(self, filepath: str, config=None):
         super().__init__(filepath, config)
 
         self.filepath = filepath
+        self.raw_pdftext_pages: Dict[int, dict] = {}
 
         with self.get_doc() as doc:
             self.page_count = len(doc)
@@ -204,12 +210,15 @@ class PdfProvider(BaseProvider):
         page_char_blocks = dictionary_output(
             self.filepath,
             page_range=self.page_range,
-            keep_chars=self.keep_chars,
+            # Chars are needed for table cell text assignment when caching
+            keep_chars=self.keep_chars or self.cache_pdftext_pages,
             workers=self.pdftext_workers,
             flatten_pdf=self.flatten_pdf,
             quote_loosebox=False,
             disable_links=self.disable_links,
         )
+        if self.cache_pdftext_pages:
+            self.raw_pdftext_pages = {page["page"]: page for page in page_char_blocks}
         self.page_bboxes = {
             i: [0, 0, page["width"], page["height"]]
             for i, page in zip(self.page_range, page_char_blocks)

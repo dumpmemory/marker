@@ -123,7 +123,9 @@ score: 5
             document, (BlockTypes.TableCell,)
         )
         if not children:
-            # Happens if table/form processors didn't run
+            if block.html:
+                # Full-mode table - the html came straight from table rec
+                self.rewrite_html_table(document, page, block)
             return
 
         # LLMs don't handle tables with a lot of rows very well
@@ -138,16 +140,15 @@ score: 5
         parsed_cells = []
         row_shift = 0
         block_image = self.extract_image(document, block)
+        highres_size = page.get_image(highres=True).size
         block_rescaled_bbox = block.polygon.rescale(
-            page.polygon.size, page.get_image(highres=True).size
+            page.polygon.size, highres_size
         ).bbox
         for i in range(0, row_count, self.max_rows_per_batch):
             batch_row_idxs = row_idxs[i : i + self.max_rows_per_batch]
             batch_cells = [cell for cell in children if cell.row_id in batch_row_idxs]
             batch_cell_bboxes = [
-                cell.polygon.rescale(
-                    page.polygon.size, page.get_image(highres=True).size
-                ).bbox
+                cell.polygon.rescale(page.polygon.size, highres_size).bbox
                 for cell in batch_cells
             ]
             # bbox relative to the block
@@ -184,6 +185,47 @@ score: 5
         for cell in parsed_cells:
             page.add_full_block(cell)
             block.add_structure(cell)
+
+    def rewrite_html_table(self, document: Document, page: PageGroup, block: Table):
+        """Rewrite a table whose content is raw html from full-mode table rec
+        (no TableCell children). The corrected html is written back to
+        block.html."""
+        row_count = block.html.count("<tr")
+        if row_count > self.max_table_rows:
+            return
+
+        block_image = self.extract_image(document, block)
+        block_html = block.html
+        for _ in range(self.max_table_iterations):
+            prompt = self.table_rewriting_prompt.replace("{block_html}", block_html)
+            response = self.llm_service(prompt, block_image, block, TableSchema)
+
+            if not response or "corrected_html" not in response:
+                block.update_metadata(llm_error_count=1)
+                return
+
+            corrected_html = response["corrected_html"]
+            if "no corrections needed" in corrected_html.lower():
+                return
+
+            corrected_html = (
+                corrected_html.strip().lstrip("```html").rstrip("```").strip()
+            )
+            if not corrected_html.endswith("</table>"):
+                block.update_metadata(llm_error_count=1)
+                return
+
+            # Sanity check the html parses into enough cells
+            if len(self.parse_html_table(corrected_html, block, page)) <= 1:
+                block.update_metadata(llm_error_count=1)
+                return
+
+            block_html = corrected_html
+            score = response.get("score", 5)
+            if score >= 4:
+                break
+
+        block.html = block_html
 
     def rewrite_single_chunk(
         self,

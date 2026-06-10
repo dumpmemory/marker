@@ -108,11 +108,6 @@ strip_existing_ocr = st.sidebar.checkbox(
     value=False,
 )
 debug = st.sidebar.checkbox("Debug", help="Show debug information", value=False)
-disable_ocr_math = st.sidebar.checkbox(
-    "Disable math",
-    help="Disable math in OCR output - no inline math",
-    value=False,
-)
 
 if not run_marker:
     st.stop()
@@ -132,7 +127,6 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             "output_dir": settings.DEBUG_DATA_FOLDER if debug else None,
             "use_llm": use_llm,
             "strip_existing_ocr": strip_existing_ocr,
-            "disable_ocr_math": disable_ocr_math,
         }
     )
     config_parser = ConfigParser(cli_options)

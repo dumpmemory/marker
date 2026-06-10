@@ -1,6 +1,5 @@
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
-import numpy as np
 
 from PIL import Image, ImageDraw
 
@@ -24,9 +23,6 @@ class PageGroup(Group):
     lowres_image: Image.Image | None | bytes = None
     highres_image: Image.Image | None | bytes = None
     children: List[Union[Any, Block]] | None = None
-    layout_sliced: bool = (
-        False  # Whether the layout model had to slice the image (order may be wrong)
-    )
     excluded_block_types: Sequence[BlockTypes] = (
         BlockTypes.Line,
         BlockTypes.Span,
@@ -35,6 +31,9 @@ class PageGroup(Group):
     block_description: str = "A single page in the document."
     refs: List[Reference] | None = None
     ocr_errors_detected: bool = False
+    # Raw pdftext page dict (with chars), used for table cell text assignment.
+    # Released after table processing.
+    pdftext_page: dict | None = None
 
     def incr_block_id(self):
         if self.block_id is None:
@@ -159,21 +158,6 @@ class PageGroup(Group):
                 blocks[max_intersection].id,
             )
         return max_intersections
-
-    def compute_max_structure_block_intersection_pct(self):
-        structure_blocks = [self.get_block(block_id) for block_id in self.structure]
-        strucure_block_bboxes = [b.polygon.bbox for b in structure_blocks]
-
-        intersection_matrix = matrix_intersection_area(strucure_block_bboxes, strucure_block_bboxes)
-        np.fill_diagonal(intersection_matrix, 0)    # Ignore self-intersections
-
-        max_intersection_pct = 0
-        for block_idx, block in enumerate(structure_blocks):
-            if block.polygon.area == 0:
-                continue
-            max_intersection_pct = max(max_intersection_pct, np.max(intersection_matrix[block_idx]) / block.polygon.area)
-
-        return max_intersection_pct
 
     def replace_block(self, block: Block, new_block: Block):
         # Handles incrementing the id

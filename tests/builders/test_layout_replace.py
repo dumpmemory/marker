@@ -10,12 +10,10 @@ from marker.schema.registry import get_block_class
 
 @pytest.mark.filename("thinkpython.pdf")
 @pytest.mark.config({"page_range": [0]})
-def test_layout_replace(
-    request, config, doc_provider, layout_model, ocr_error_model, detection_model
-):
+def test_layout_replace(request, config, doc_provider, layout_model, ocr_error_model):
     # The llm layout builder replaces blocks - this makes sure text is still merged properly
     layout_builder = LayoutBuilder(layout_model, config)
-    line_builder = LineBuilder(detection_model, ocr_error_model, config)
+    line_builder = LineBuilder(ocr_error_model, config)
     builder = DocumentBuilder(config)
     document = builder.build_document(doc_provider)
     layout_builder(document, doc_provider)

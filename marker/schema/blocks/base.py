@@ -96,11 +96,13 @@ class Block(BaseModel):
     )
     source: Literal["layout", "heuristics", "processor"] = "layout"
     top_k: Optional[Dict[BlockTypes, float]] = None
+    layout_token_count: Optional[int] = (
+        None  # Model's token estimate for OCRing this block, from layout
+    )
     metadata: BlockMetadata | None = None
     lowres_image: Image.Image | None = None
     highres_image: Image.Image | None = None
     removed: bool = False  # Has block been replaced by new block?
-    _metadata: Optional[dict] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -109,21 +111,6 @@ class Block(BaseModel):
         return BlockId(
             page_id=self.page_id, block_id=self.block_id, block_type=self.block_type
         )
-
-    @classmethod
-    def from_block(cls, block: Block) -> Block:
-        block_attrs = block.model_dump(exclude=["id", "block_id", "block_type"])
-        return cls(**block_attrs)
-
-    def set_internal_metadata(self, key, data):
-        if self._metadata is None:
-            self._metadata = {}
-        self._metadata[key] = data
-
-    def get_internal_metadata(self, key):
-        if self._metadata is None:
-            return None
-        return self._metadata.get(key)
 
     def get_image(
         self,
@@ -210,9 +197,15 @@ class Block(BaseModel):
         from marker.schema.text.span import Span
         from marker.schema.blocks.tablecell import TableCell
 
-        if self.structure is None:
+        if not self.structure:
             if isinstance(self, (Span, TableCell)):
                 return self.text
+            elif getattr(self, "html", None):
+                from bs4 import BeautifulSoup
+
+                return BeautifulSoup(self.html, "html.parser").get_text(
+                    separator=" ", strip=True
+                )
             else:
                 return ""
 

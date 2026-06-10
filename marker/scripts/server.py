@@ -33,6 +33,9 @@ async def lifespan(app: FastAPI):
     yield
 
     if "models" in app_data:
+        from marker.models import shutdown_models
+
+        shutdown_models(app_data["models"])
         del app_data["models"]
 
 

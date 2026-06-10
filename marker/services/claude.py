@@ -1,6 +1,5 @@
-import json
 import time
-from typing import List, Annotated, T
+from typing import List, Annotated
 
 import PIL
 from PIL import Image
@@ -17,8 +16,8 @@ logger = get_logger()
 
 class ClaudeService(BaseService):
     claude_model_name: Annotated[
-        str, "The name of the Google model to use for the service."
-    ] = "claude-3-7-sonnet-20250219"
+        str, "The name of the Anthropic model to use for the service."
+    ] = "claude-sonnet-4-6"
     claude_api_key: Annotated[str, "The Claude API key to use for the service."] = None
     max_claude_tokens: Annotated[
         int, "The maximum number of tokens to use for a single Claude request."
@@ -36,27 +35,6 @@ class ClaudeService(BaseService):
             }
             for img in images
         ]
-
-    def validate_response(self, response_text: str, schema: type[T]) -> T:
-        response_text = response_text.strip()
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-
-        try:
-            # Try to parse as JSON first
-            out_schema = schema.model_validate_json(response_text)
-            out_json = out_schema.model_dump()
-            return out_json
-        except Exception:
-            try:
-                # Re-parse with fixed escapes
-                escaped_str = response_text.replace("\\", "\\\\")
-                out_schema = schema.model_validate_json(escaped_str)
-                return out_schema.model_dump()
-            except Exception:
-                return
 
     def get_client(self):
         return anthropic.Anthropic(
@@ -78,15 +56,6 @@ class ClaudeService(BaseService):
         if timeout is None:
             timeout = self.timeout
 
-        schema_example = response_schema.model_json_schema()
-        system_prompt = f"""
-Follow the instructions given by the user prompt.  You must provide your response in JSON format matching this schema:
-
-{json.dumps(schema_example, indent=2)}
-
-Respond only with the JSON schema, nothing else.  Do not include ```json, ```,  or any other formatting.
-""".strip()
-
         client = self.get_client()
         image_data = self.format_image_for_llm(image)
 
@@ -103,16 +72,29 @@ Respond only with the JSON schema, nothing else.  Do not include ```json, ```,  
         total_tries = max_retries + 1
         for tries in range(1, total_tries + 1):
             try:
-                response = client.messages.create(
-                    system=system_prompt,
+                # Structured outputs constrain the response to the schema, so
+                # we no longer hand-roll JSON instructions or repair the output.
+                response = client.messages.parse(
                     model=self.claude_model_name,
                     max_tokens=self.max_claude_tokens,
                     messages=messages,
+                    output_format=response_schema,
                     timeout=timeout,
                 )
-                # Extract and validate response
-                response_text = response.content[0].text
-                return self.validate_response(response_text, response_schema)
+                if block and response.usage:
+                    block.update_metadata(
+                        llm_tokens_used=response.usage.input_tokens
+                        + response.usage.output_tokens,
+                        llm_request_count=1,
+                    )
+                parsed = response.parsed_output
+                if parsed is None:
+                    # e.g. a safety refusal - no schema-conformant output
+                    logger.warning(
+                        f"Claude returned no parsed output (stop_reason={response.stop_reason})"
+                    )
+                    return {}
+                return parsed.model_dump()
             except (RateLimitError, APITimeoutError) as e:
                 # Rate limit exceeded
                 if tries == total_tries:

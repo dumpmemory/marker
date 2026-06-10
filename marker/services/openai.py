@@ -20,7 +20,7 @@ class OpenAIService(BaseService):
         str, "The base url to use for OpenAI-like models.  No trailing slash."
     ] = "https://api.openai.com/v1"
     openai_model: Annotated[str, "The model name to use for OpenAI-like model."] = (
-        "gpt-4o-mini"
+        "gpt-5-mini"
     )
     openai_api_key: Annotated[
         str, "The API key to use for the OpenAI-like service."
@@ -89,7 +89,8 @@ class OpenAIService(BaseService):
         total_tries = max_retries + 1
         for tries in range(1, total_tries + 1):
             try:
-                response = client.beta.chat.completions.parse(
+                # parse() is GA in openai>=1.92 - use it directly (not beta)
+                response = client.chat.completions.parse(
                     extra_headers={
                         "X-Title": "Marker",
                         "HTTP-Referer": "https://github.com/datalab-to/marker",

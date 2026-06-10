@@ -64,7 +64,8 @@ class BlankPageProcessor(BaseProcessor):
             full_page_block: Block = structure_blocks[0]
 
             conditions = [
-                full_page_block.block_type in [BlockTypes.Picture, BlockTypes.Figure],
+                full_page_block.block_type
+                in [BlockTypes.Picture, BlockTypes.Figure, BlockTypes.Diagram],
                 self.is_blank(full_page_block.get_image(document)),
                 page.polygon.intersection_area(full_page_block.polygon)
                 > self.full_page_block_intersection_threshold,

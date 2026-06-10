@@ -47,7 +47,6 @@ from marker.schema.blocks import Block
 from marker.schema.registry import register_block_class
 from marker.util import strings_to_classes
 from marker.processors.llm.llm_handwriting import LLMHandwritingProcessor
-from marker.processors.order import OrderProcessor
 from marker.services.gemini import GoogleGeminiService
 from marker.processors.line_merge import LineMergeProcessor
 from marker.processors.llm.llm_mathblock import LLMMathBlockProcessor
@@ -72,7 +71,6 @@ class PdfConverter(BaseConverter):
         "Enable higher quality processing with LLMs.",
     ] = False
     default_processors: Tuple[BaseProcessor, ...] = (
-        OrderProcessor,
         BlockRelabelProcessor,
         LineMergeProcessor,
         BlockquoteProcessor,

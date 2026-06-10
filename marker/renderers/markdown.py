@@ -98,6 +98,14 @@ class Markdownify(MarkdownConverter):
                 return f"{text}"
         return f"{text}\n\n" if text else ""  # default convert_p behavior
 
+    def convert_chem(self, el, text, parent_tags):
+        # Chemical structures (from ChemicalBlock or inline) - fence the
+        # model's representation so it survives markdown conversion
+        content = text.strip()
+        if not content:
+            return ""
+        return f"\n```chem\n{content}\n```\n"
+
     def convert_math(self, el, text, parent_tags):
         block = el.has_attr("display") and el["display"] == "block"
         if block:
@@ -292,7 +300,7 @@ class MarkdownRenderer(HTMLRenderer):
             sup_symbol="<sup>",
             inline_math_delimiters=self.inline_math_delimiters,
             block_math_delimiters=self.block_math_delimiters,
-            html_tables_in_markdown=self.html_tables_in_markdown
+            html_tables_in_markdown=self.html_tables_in_markdown,
         )
 
     def __call__(self, document: Document) -> MarkdownOutput:

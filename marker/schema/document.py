@@ -28,6 +28,7 @@ class Document(BaseModel):
     block_type: BlockTypes = BlockTypes.Document
     table_of_contents: List[TocItem] | None = None
     debug_data_path: str | None = None  # Path that debug data was saved to
+    _page_index: dict | None = None  # page_id -> PageGroup, built lazily
 
     def get_block(self, block_id: BlockId):
         page = self.get_page(block_id.page_id)
@@ -37,10 +38,13 @@ class Document(BaseModel):
         return None
 
     def get_page(self, page_id):
-        for page in self.pages:
-            if page.page_id == page_id:
-                return page
-        return None
+        # get_block is the hottest primitive in the pipeline; keep page lookup
+        # O(1). Rebuild the index on a miss so it self-heals if pages change.
+        page = self._page_index.get(page_id) if self._page_index else None
+        if page is None:
+            self._page_index = {p.page_id: p for p in self.pages}
+            page = self._page_index.get(page_id)
+        return page
 
     def get_next_block(
         self, block: Block, ignored_block_types: List[BlockTypes] = None
@@ -60,12 +64,6 @@ class Document(BaseModel):
             next_block = page.get_next_block(None, ignored_block_types)
             if next_block:
                 return next_block
-        return None
-
-    def get_next_page(self, page: PageGroup):
-        page_idx = self.pages.index(page)
-        if page_idx + 1 < len(self.pages):
-            return self.pages[page_idx + 1]
         return None
 
     def get_prev_block(self, block: Block):

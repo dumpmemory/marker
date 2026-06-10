@@ -68,11 +68,11 @@ Comparison: The html representation has the labels in the first row and the valu
         for block_data in blocks:
             block = block_data["block"]
             children = block.contained_blocks(document, (BlockTypes.TableCell,))
-            if not children:
+            # Full-mode forms have html instead of cells
+            if not children and not block.html:
                 continue
             out_blocks.append(block_data)
         return out_blocks
-
 
     def block_prompts(self, document: Document) -> List[PromptData]:
         prompt_data = []
@@ -81,17 +81,20 @@ Comparison: The html representation has the labels in the first row and the valu
             block_html = json_to_html(block.render(document))
             prompt = self.form_rewriting_prompt.replace("{block_html}", block_html)
             image = self.extract_image(document, block)
-            prompt_data.append({
-                "prompt": prompt,
-                "image": image,
-                "block": block,
-                "schema": FormSchema,
-                "page": block_data["page"]
-            })
+            prompt_data.append(
+                {
+                    "prompt": prompt,
+                    "image": image,
+                    "block": block,
+                    "schema": FormSchema,
+                    "page": block_data["page"],
+                }
+            )
         return prompt_data
 
-
-    def rewrite_block(self, response: dict, prompt_data: PromptData, document: Document):
+    def rewrite_block(
+        self, response: dict, prompt_data: PromptData, document: Document
+    ):
         block = prompt_data["block"]
         block_html = json_to_html(block.render(document))
 
@@ -106,12 +109,13 @@ Comparison: The html representation has the labels in the first row and the valu
             return
 
         # Potentially a partial response
-        if len(corrected_html) < len(block_html) * .33:
+        if len(corrected_html) < len(block_html) * 0.33:
             block.update_metadata(llm_error_count=1)
             return
 
         corrected_html = corrected_html.strip().lstrip("```html").rstrip("```").strip()
         block.html = corrected_html
+
 
 class FormSchema(BaseModel):
     comparison: str

@@ -10,5 +10,8 @@ def test_equation_processor(pdf_document, recognition_model):
     processor(pdf_document)
 
     for block in pdf_document.pages[0].children:
+        if block.removed:
+            # Old layout blocks retired by full-page OCR structure replacement
+            continue
         if block.block_type == BlockTypes.Equation:
             assert block.html is not None

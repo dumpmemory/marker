@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# NOTE: with the VLM-server based surya, each chunk spawns its own inference
+# server. The surya server sentinel is global per backend, so multiple chunks
+# on one machine will attach to the FIRST chunk's server instead of spawning
+# per-GPU servers. For multi-GPU machines, prefer a single chunk with the
+# server spanning GPUs (set VLLM_GPUS=0,1,...), or start one server per GPU
+# manually and pass SURYA_INFERENCE_URL per chunk.
+
 trap 'pkill -P $$' SIGINT
 
 # Check if NUM_DEVICES is set

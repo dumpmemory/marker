@@ -97,8 +97,9 @@ pip install marker-pdf[full]
 
 First, some configuration:
 
-- Your torch device will be automatically detected, but you can override this.  For example, `TORCH_DEVICE=cuda`.
-- Some PDFs, even digital ones, have bad text in them.  Set `--force_ocr` to force OCR on all lines, or the `strip_existing_ocr` to keep all digital text, and strip out any existing OCR text.
+- Marker runs layout, OCR, and table recognition through a single surya VLM, served by a local inference server.  The server is spawned automatically on first use - vLLM (docker) on NVIDIA GPUs, llama.cpp elsewhere.  You can also point marker at an already-running server with `SURYA_INFERENCE_URL=http://host:port/v1`.
+- Useful server settings (all surya env vars): `SURYA_INFERENCE_BACKEND` (`vllm` or `llamacpp`), `SURYA_INFERENCE_PARALLEL` (concurrent requests — by default this auto-scales to the server's capacity: the GPU's `max_num_seqs` under vllm, a conservative slot count under llama.cpp; set an int only to override), `SURYA_INFERENCE_KEEP_ALIVE` (keep the server running between invocations), `VLLM_GPUS` (GPU indices for the server).
+- Some PDFs, even digital ones, have bad text in them.  Set `--force_ocr` to force OCR on all pages, or the `strip_existing_ocr` to keep all digital text, and strip out any existing OCR text.
 - If you care about inline math, set `force_ocr` to convert inline math to LaTeX.
 
 ## Interactive App
@@ -146,16 +147,11 @@ marker /path/to/input/folder
 ```
 
 - `marker` supports all the same options from `marker_single` above.
-- `--workers` is the number of conversion workers to run simultaneously.  This is automatically set by default, but you can increase it to increase throughput, at the cost of more CPU/GPU usage.  Marker will use 5GB of VRAM per worker at the peak, and 3.5GB average.
+- `--workers` is the number of conversion workers to run simultaneously.  This is automatically set by default, but you can increase it to increase throughput, at the cost of more CPU usage.  All workers share a single inference server, which the parent process spawns - GPU parallelism is handled server-side (`SURYA_INFERENCE_PARALLEL`).
 
 ## Convert multiple files on multiple GPUs
 
-```shell
-NUM_DEVICES=4 NUM_WORKERS=15 marker_chunk_convert ../pdf_in ../md_out
-```
-
-- `NUM_DEVICES` is the number of GPUs to use.  Should be `2` or greater.
-- `NUM_WORKERS` is the number of parallel processes to run on each GPU.
+For multi-GPU machines, run a single `marker` command and let the inference server span GPUs by setting `VLLM_GPUS` (e.g. `VLLM_GPUS=0,1,2,3`).  The old `marker_chunk_convert` script assumed one model instance per GPU - with the shared inference server, chunks on the same machine will attach to the first chunk's server.  To run truly separate servers, start one per GPU manually and pass a distinct `SURYA_INFERENCE_URL` per chunk.
 
 ## Use from python
 

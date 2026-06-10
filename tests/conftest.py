@@ -37,11 +37,6 @@ def layout_model(model_dict):
 
 
 @pytest.fixture(scope="session")
-def detection_model(model_dict):
-    yield model_dict["detection_model"]
-
-
-@pytest.fixture(scope="session")
 def recognition_model(model_dict):
     yield model_dict["recognition_model"]
 
@@ -101,10 +96,9 @@ def pdf_document(
     layout_model,
     ocr_error_model,
     recognition_model,
-    detection_model,
 ):
     layout_builder = LayoutBuilder(layout_model, config)
-    line_builder = LineBuilder(detection_model, ocr_error_model, config)
+    line_builder = LineBuilder(ocr_error_model, config)
     ocr_builder = OcrBuilder(recognition_model, config)
     builder = DocumentBuilder(config)
     structure_builder = StructureBuilder(config)

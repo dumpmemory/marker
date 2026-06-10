@@ -44,14 +44,6 @@ class Settings(BaseSettings):
 
         return "cpu"
 
-    @computed_field
-    @property
-    def MODEL_DTYPE(self) -> torch.dtype:
-        if self.TORCH_DEVICE_MODEL == "cuda":
-            return torch.bfloat16
-        else:
-            return torch.float32
-
     class Config:
         env_file = find_dotenv("local.env")
         extra = "ignore"
