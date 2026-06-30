@@ -81,6 +81,14 @@ class ConfigParser:
             default=None,
             help="LLM service to use - should be full import path, like marker.services.gemini.GoogleGeminiService",
         )(fn)
+        fn = click.option(
+            "--mode",
+            type=click.Choice(["balanced", "fast"]),
+            default=None,
+            help="Conversion mode. 'balanced' (default) uses the VLM layout model "
+            "+ full-page OCR (best on GPU). 'fast' uses lightweight CPU detectors "
+            "for layout/tables and only block-OCRs garbled/empty content.",
+        )(fn)
         return fn
 
     def generate_config_dict(self) -> Dict[str, any]:

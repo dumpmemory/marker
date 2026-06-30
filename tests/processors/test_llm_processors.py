@@ -50,7 +50,7 @@ def test_llm_form_processor(pdf_document, table_rec_model, recognition_model):
     mock_cls = Mock()
     mock_cls.return_value = {"corrected_html": corrected_html}
 
-    cell_processor = TableProcessor(table_rec_model)
+    cell_processor = TableProcessor(recognition_model, table_rec_model)
     cell_processor(pdf_document)
 
     config = {"use_llm": True, "gemini_api_key": "test"}
@@ -91,7 +91,7 @@ def test_llm_table_processor(pdf_document, table_rec_model, recognition_model):
     mock_cls = Mock()
     mock_cls.return_value = {"corrected_html": corrected_html}
 
-    cell_processor = TableProcessor(table_rec_model)
+    cell_processor = TableProcessor(recognition_model, table_rec_model)
     cell_processor(pdf_document)
 
     processor = LLMTableProcessor(mock_cls, {"use_llm": True, "gemini_api_key": "test"})

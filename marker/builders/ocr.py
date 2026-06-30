@@ -41,9 +41,10 @@ class OcrBuilder(BaseBuilder):
     ] = False
     ocr_full_page: Annotated[
         bool,
-        "Use a single full-page OCR request per page (more accurate) and",
-        "rebuild the page structure from the result. When False, each",
-        "existing layout block is OCR'd individually instead.",
+        "Use a single full-page OCR request per page (more accurate, and",
+        "faster on CPU) and rebuild the page structure from the result. When",
+        "False, each existing layout block is OCR'd individually instead.",
+        "Applies to both modes; fast mode still skips OCR on clean pages.",
     ] = True
     # In block mode, tables/forms/TOCs are handled by the TableProcessor;
     # pictures, figures, and diagrams contain no text.
@@ -75,11 +76,20 @@ class OcrBuilder(BaseBuilder):
         full_page_pages = [
             page for page in document.pages if page.text_extraction_method == "surya"
         ]
+        # When the whole page needs OCR, a single full-page request is both
+        # faster (one decode vs N block decodes — ~7x on llama.cpp, which pays
+        # heavy per-request overhead + KV-cache contention for many small
+        # requests) and more accurate (tight block crops lose context). This
+        # holds in fast mode too: clean pages already skip OCR entirely via
+        # pdftext, so a "surya" page is one whose entire content needs OCR.
+        # Fast mode's block-by-block decoding is reserved for individual
+        # garbled/missing blocks on otherwise-clean pages (ocr_flagged_blocks).
+        use_full_page = self.ocr_full_page
         if full_page_pages:
             images, layout_results, block_ids = self.build_block_requests(
                 document, full_page_pages
             )
-            if self.ocr_full_page:
+            if use_full_page:
                 # The synthetic layouts serve as the per-page fallback if the
                 # full-page output fails or loops. When layout was skipped
                 # (force_ocr), pass None so surya lazily runs its own layout

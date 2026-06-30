@@ -14,7 +14,7 @@ def test_llm_table_processor_nomerge(
     mock_cls = Mock()
     mock_cls.return_value = {"merge": "true", "direction": "right"}
 
-    cell_processor = TableProcessor(table_rec_model)
+    cell_processor = TableProcessor(recognition_model, table_rec_model)
     cell_processor(pdf_document)
 
     tables = pdf_document.contained_blocks((BlockTypes.Table,))

@@ -1,3 +1,4 @@
+import re
 import textwrap
 
 from PIL import Image
@@ -18,6 +19,9 @@ warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
 # Suppress DecompressionBombError
 Image.MAX_IMAGE_PIXELS = None
+
+# Placeholder emitted by Block.assemble_html for each child block.
+CONTENT_REF_RE = re.compile(r"<content-ref src='([^']*)'></content-ref>")
 
 
 class HTMLOutput(BaseModel):
@@ -78,48 +82,56 @@ class HTMLRenderer(BaseRenderer):
                 soup.append(wrapper)
         return soup
 
-    def extract_html(self, document, document_output, level=0):
-        soup = BeautifulSoup(document_output.html, "html.parser")
+    def insert_block_id_str(self, content: str, block_id: BlockId) -> str:
+        """String wrapper around insert_block_id for the splice path."""
+        if block_id.block_type in (BlockTypes.Line, BlockTypes.Span):
+            return content
+        return str(
+            self.insert_block_id(BeautifulSoup(content, "html.parser"), block_id)
+        )
 
-        content_refs = soup.find_all("content-ref")
-        ref_block_id = None
-        images = {}
-        for ref in content_refs:
-            src = ref.get("src")
-            sub_images = {}
-            content = ""
-            for item in document_output.children:
-                if item.id == src:
-                    content, sub_images_ = self.extract_html(document, item, level + 1)
-                    sub_images.update(sub_images_)
-                    ref_block_id: BlockId = item.id
-                    break
+    def splice_content_refs(self, document, document_output, images: dict) -> str:
+        """Resolve <content-ref> placeholders to their child HTML by string
+        substitution. This replaces a per-node BeautifulSoup parse that was the
+        dominant render cost on the deep line/span tree. BeautifulSoup is only
+        used for the optional add_block_ids annotation path."""
+        children = {str(c.id): c for c in (document_output.children or [])}
 
-            if ref_block_id.block_type in self.image_blocks:
+        def repl(match: "re.Match") -> str:
+            child = children.get(match.group(1))
+            if child is None:
+                return ""
+            block_id: BlockId = child.id
+            if block_id.block_type in self.image_blocks:
+                # Image blocks keep only the extracted crop; their sub-tree's
+                # images are discarded (matches prior behavior), so recurse with
+                # a throwaway image dict.
+                content = self.splice_content_refs(document, child, {})
                 if self.extract_images:
-                    image = self.extract_image(document, ref_block_id)
-                    image_name = f"{ref_block_id.to_path()}.{settings.OUTPUT_IMAGE_FORMAT.lower()}"
-                    images[image_name] = image
-                    element = BeautifulSoup(
-                        f"<p>{content}<img src='{image_name}'></p>", "html.parser"
+                    image = self.extract_image(document, block_id)
+                    image_name = (
+                        f"{block_id.to_path()}.{settings.OUTPUT_IMAGE_FORMAT.lower()}"
                     )
-                    ref.replace_with(self.insert_block_id(element, ref_block_id))
-                else:
-                    # This will be the image description if using llm mode, or empty if not
-                    element = BeautifulSoup(f"{content}", "html.parser")
-                    ref.replace_with(self.insert_block_id(element, ref_block_id))
-            elif ref_block_id.block_type in self.page_blocks:
-                images.update(sub_images)
+                    images[image_name] = image
+                    content = f"<p>{content}<img src='{image_name}'></p>"
+            elif block_id.block_type in self.page_blocks:
+                content = self.splice_content_refs(document, child, images)
                 if self.paginate_output:
-                    content = f"<div class='page' data-page-id='{ref_block_id.page_id}'>{content}</div>"
-                element = BeautifulSoup(f"{content}", "html.parser")
-                ref.replace_with(self.insert_block_id(element, ref_block_id))
+                    content = (
+                        f"<div class='page' data-page-id='{block_id.page_id}'>"
+                        f"{content}</div>"
+                    )
             else:
-                images.update(sub_images)
-                element = BeautifulSoup(f"{content}", "html.parser")
-                ref.replace_with(self.insert_block_id(element, ref_block_id))
+                content = self.splice_content_refs(document, child, images)
+            if self.add_block_ids:
+                content = self.insert_block_id_str(content, block_id)
+            return content
 
-        output = str(soup)
+        return CONTENT_REF_RE.sub(repl, document_output.html)
+
+    def extract_html(self, document, document_output, level=0):
+        images = {}
+        output = self.splice_content_refs(document, document_output, images)
         if level == 0:
             output = self.merge_consecutive_tags(output, "b")
             output = self.merge_consecutive_tags(output, "i")

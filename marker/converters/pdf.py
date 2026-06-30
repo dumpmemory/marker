@@ -70,6 +70,12 @@ class PdfConverter(BaseConverter):
         bool,
         "Enable higher quality processing with LLMs.",
     ] = False
+    mode: Annotated[
+        str,
+        "Conversion mode: 'balanced' (default, GPU) uses the VLM layout model and",
+        "full-page OCR; 'fast' (CPU) uses lightweight rf-detr/onnx detectors for",
+        "layout + tables and only block-OCRs garbled/empty content.",
+    ] = "balanced"
     default_processors: Tuple[BaseProcessor, ...] = (
         BlockRelabelProcessor,
         LineMergeProcessor,

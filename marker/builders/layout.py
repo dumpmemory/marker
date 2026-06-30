@@ -1,6 +1,7 @@
 from typing import Annotated, List
 
 import numpy as np
+from surya.fast_layout import FastLayoutPredictor
 from surya.layout import LayoutPredictor
 from surya.layout.schema import LayoutResult, LayoutBox
 
@@ -22,6 +23,11 @@ class LayoutBuilder(BaseBuilder):
     A builder for performing layout detection on PDF pages and merging the results into the document.
     """
 
+    mode: Annotated[
+        str,
+        "Conversion mode: 'balanced' (default, GPU) uses the VLM layout model;",
+        "'fast' (CPU) uses the lightweight rf-detr/onnx layout detector.",
+    ] = "balanced"
     force_layout_block: Annotated[
         str,
         "Skip layout and force every page to be treated as a specific block type.",
@@ -54,18 +60,28 @@ class LayoutBuilder(BaseBuilder):
         float, "The maximum fraction to expand the layout box bounds by"
     ] = 0.05
 
-    def __init__(self, layout_model: LayoutPredictor, config=None):
+    def __init__(
+        self,
+        layout_model: LayoutPredictor,
+        fast_layout_model: FastLayoutPredictor,
+        config=None,
+    ):
         self.layout_model = layout_model
+        self.fast_layout_model = fast_layout_model
 
         super().__init__(config)
+
+    def get_layout_model(self):
+        return self.fast_layout_model if self.mode == "fast" else self.layout_model
 
     def __call__(self, document: Document, provider: PdfProvider):
         if self.force_layout_block is not None:
             # Assign the full content of every page to a single layout type
             layout_results = self.forced_layout(document.pages)
-        elif self.force_ocr and self.ocr_full_page:
-            # Every page will be rebuilt by full-page OCR - don't pay for a
-            # layout pass that gets thrown away
+        elif self.force_ocr and self.ocr_full_page and self.mode == "balanced":
+            # Balanced + force_ocr: every page is rebuilt by full-page OCR, so
+            # don't pay for a layout pass that gets thrown away. Fast mode still
+            # needs layout boxes to drive block-mode OCR.
             layout_results = [
                 LayoutResult(bboxes=[], image_bbox=page.polygon.bbox)
                 for page in document.pages
@@ -95,8 +111,9 @@ class LayoutBuilder(BaseBuilder):
         return layout_results
 
     def surya_layout(self, pages: List[PageGroup]) -> List[LayoutResult]:
-        self.layout_model.disable_tqdm = self.disable_tqdm
-        layout_results = self.layout_model([p.get_image(highres=False) for p in pages])
+        model = self.get_layout_model()
+        model.disable_tqdm = self.disable_tqdm
+        layout_results = model([p.get_image(highres=False) for p in pages])
         return layout_results
 
     def expand_layout_blocks(self, document: Document):

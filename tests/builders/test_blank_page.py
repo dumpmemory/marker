@@ -5,8 +5,10 @@ from marker.builders.layout import LayoutBuilder
 from marker.builders.line import LineBuilder
 
 
-def test_blank_page(config, doc_provider, layout_model, ocr_error_model):
-    layout_builder = LayoutBuilder(layout_model, config)
+def test_blank_page(
+    config, doc_provider, layout_model, fast_layout_model, ocr_error_model
+):
+    layout_builder = LayoutBuilder(layout_model, fast_layout_model, config)
     line_builder = LineBuilder(ocr_error_model)
     builder = DocumentBuilder(config)
     document = builder.build_document(doc_provider)

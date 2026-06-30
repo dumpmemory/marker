@@ -69,6 +69,30 @@ class LineBuilder(BaseBuilder):
         "Disable OCR for the document. This will only use the lines from the provider.",
     ] = False
     keep_chars: Annotated[bool, "Keep individual characters."] = False
+    use_pdftext_reading_order: Annotated[
+        bool,
+        "Force the PDF's character reading order on ALL pdftext pages, instead",
+        "of surya's learned reading-order head. Off by default (we defer to the",
+        "learned order); see large_page_pdftext_order for the large-page case.",
+    ] = False
+    large_page_pdftext_order: Annotated[
+        bool,
+        "On very large clean-digital (pdftext) pages - newspapers, broadsheets -",
+        "use the PDF's character reading order instead of the learned order head.",
+        "The order model is trained at a fixed small resolution with a box-count",
+        "cap, so it degrades on big multi-column pages where pdftext's column-aware",
+        "char stream stays reliable.",
+    ] = True
+    large_page_min_long_side: Annotated[
+        int,
+        "Long side (px at lowres dpi) above which a pdftext page counts as large",
+        "for large_page_pdftext_order.",
+    ] = 2000
+    large_page_min_short_side: Annotated[
+        int,
+        "Short side (px at lowres dpi) above which a pdftext page counts as large",
+        "for large_page_pdftext_order.",
+    ] = 1000
     block_ocr_promote_fraction: Annotated[
         float,
         "If more than this fraction of a (mostly-good) page's text blocks have",
@@ -86,6 +110,12 @@ class LineBuilder(BaseBuilder):
         "Minimum block text length before trusting the ocr error model's",
         "garbled verdict. Short labels can't be judged reliably.",
     ] = 50
+    block_garbled_check_min_page_score: Annotated[
+        float,
+        "Only run the (expensive) per-block garbled-text recheck on pages whose",
+        "page-level ocr-error P(bad) is at least this. Confidently-clean pages",
+        "below it skip it - the page-level model already cleared the whole page.",
+    ] = 0.05
     # Blocks handled elsewhere (tables/equations) or with no text - never
     # eligible for block-level text OCR.
     block_ocr_skip_types: Tuple[BlockTypes, ...] = (
@@ -111,8 +141,60 @@ class LineBuilder(BaseBuilder):
     def __call__(self, document: Document, provider: PdfProvider):
         provider_lines = self.get_all_lines(document, provider)
         self.merge_blocks(document, provider_lines)
+        self.order_blocks_by_reading_order(document)
         if not self.disable_ocr:
             self.flag_bad_blocks(document)
+
+    def _is_large_page(self, page: PageGroup) -> bool:
+        w, h = page.get_image(highres=False).size
+        return (
+            max(w, h) >= self.large_page_min_long_side
+            and min(w, h) >= self.large_page_min_short_side
+        )
+
+    def order_blocks_by_reading_order(self, document: Document):
+        """Order layout blocks on pdftext pages by the PDF's character reading
+        order, instead of the layout model's position.
+
+        Surya's layout carries a learned AR reading-order head (it cross-attends
+        to the detector's feature map and works on OCR pages too), which marker
+        defers to in the general case. But that head is trained at a fixed small
+        resolution with a box-count cap, so it degrades on very large multi-column
+        pages (newspapers, broadsheets). There, the PDF's own character stream is
+        the more reliable signal - so for large clean-digital pages we order
+        blocks by ``span.minimum_position`` (pdftext char start index =
+        column-aware reading order) instead.
+
+        Applies to a pdftext page when ``use_pdftext_reading_order`` forces it
+        for all pages, or ``large_page_pdftext_order`` and the page is large.
+        Text-less blocks (figures, empty boxes) keep their placement relative to
+        the text block they followed. OCR'd ("surya") pages are left untouched
+        (no pdftext positions - they rely on the learned order head).
+        """
+        for page in document.pages:
+            if page.text_extraction_method != "pdftext" or not page.structure:
+                continue
+            apply = self.use_pdftext_reading_order or (
+                self.large_page_pdftext_order and self._is_large_page(page)
+            )
+            if not apply:
+                continue
+
+            order = []
+            last_pos = -1  # text-less blocks before any text sort to the top
+            for original_idx, block_id in enumerate(page.structure):
+                block = page.get_block(block_id)
+                spans = block.contained_blocks(document, (BlockTypes.Span,))
+                char_pos = min((s.minimum_position for s in spans), default=None)
+                if char_pos is not None:
+                    last_pos = char_pos
+                # Text-less blocks inherit the preceding text block's position;
+                # original_idx breaks ties to preserve relative placement.
+                sort_pos = char_pos if char_pos is not None else last_pos
+                order.append((sort_pos, original_idx, block_id))
+
+            order.sort(key=lambda t: (t[0], t[1]))
+            page.structure = [block_id for _, _, block_id in order]
 
     def get_ocr_error_batch_size(self):
         if self.ocr_error_batch_size is not None:
@@ -127,6 +209,13 @@ class LineBuilder(BaseBuilder):
         )
 
         page_lines = {page.page_id: [] for page in document.pages}
+        # page_id -> page-level P(bad); used to gate the per-block recheck.
+        scores = ocr_error_detection_results.scores or [
+            1.0 if lbl == "bad" else 0.0 for lbl in ocr_error_detection_results.labels
+        ]
+        self.page_ocr_error_scores = {
+            page.page_id: score for page, score in zip(document.pages, scores)
+        }
 
         for document_page, ocr_error_detection_label in zip(
             document.pages, ocr_error_detection_results.labels
@@ -312,6 +401,7 @@ class LineBuilder(BaseBuilder):
         # garbled-text check through the ocr error model.
         page_text_blocks = {}  # page_id -> list of eligible blocks
         garbled_candidates = []  # (block, text) for blocks with enough text
+        page_scores = getattr(self, "page_ocr_error_scores", {})
         for page in document.pages:
             if page.text_extraction_method != "pdftext":
                 continue
@@ -319,6 +409,13 @@ class LineBuilder(BaseBuilder):
             image_size = page_image.size
             page_size = page.polygon.size
             min_area = self.min_ocr_block_area_fraction * page.polygon.area
+            # Confidently-clean pages skip the per-block garbled recheck (the
+            # page-level model already judged the whole page's text). The
+            # empty-block-with-ink check below still runs (catches embedded scans).
+            check_garbled = (
+                page_scores.get(page.page_id, 1.0)
+                >= self.block_garbled_check_min_page_score
+            )
             blocks = [
                 b
                 for b in page.structure_blocks(document)
@@ -341,7 +438,7 @@ class LineBuilder(BaseBuilder):
                     if is_blank_image(page_image.crop(crop_bbox)):
                         continue
                     block.text_extraction_method = "surya"
-                elif len(text) >= self.min_garbled_text_chars:
+                elif check_garbled and len(text) >= self.min_garbled_text_chars:
                     garbled_candidates.append((block, text))
 
         if garbled_candidates:

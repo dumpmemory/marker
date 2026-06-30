@@ -1,10 +1,10 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from PIL import Image, ImageDraw
 
 from pdftext.schema import Reference
-from pydantic import computed_field
+from pydantic import computed_field, PrivateAttr
 
 from marker.providers import ProviderOutput
 from marker.schema import BlockTypes
@@ -34,6 +34,10 @@ class PageGroup(Group):
     # Raw pdftext page dict (with chars), used for table cell text assignment.
     # Released after table processing.
     pdftext_page: dict | None = None
+    # Lazily renders the high-res page image on first access (non-persistent:
+    # opens/renders/closes the PDF per call). Set by DocumentBuilder so clean
+    # text-only pages, which never need high-res, skip the upfront render.
+    _highres_loader: Optional[Callable[[int], Image.Image]] = PrivateAttr(default=None)
 
     def incr_block_id(self):
         if self.block_id is None:
@@ -54,6 +58,10 @@ class PageGroup(Group):
         remove_blocks: Sequence[BlockTypes] | None = None,
         **kwargs,
     ):
+        if highres and self.highres_image is None and self._highres_loader is not None:
+            # Deferred render: this page was not pre-rendered at high-res
+            # (e.g. a clean text page later needed by an LLM processor).
+            self.highres_image = self._highres_loader(self.page_id)
         image = self.highres_image if highres else self.lowres_image
 
         # Check if RGB, convert if needed

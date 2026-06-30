@@ -1,12 +1,13 @@
 import re
 from collections import defaultdict, Counter
 from copy import deepcopy
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, List, Optional
 
 from bs4 import BeautifulSoup
 from ftfy import fix_text
 from pydantic import BaseModel
-from surya.recognition import _detect_repeat_loop
+from surya.layout.schema import LayoutBox, LayoutResult
+from surya.recognition import RecognitionPredictor, _detect_repeat_loop
 from surya.table_rec import TableRecPredictor
 from surya.table_rec.schema import TableResult
 from pdftext.extraction import table_output
@@ -52,29 +53,21 @@ class TableProcessor(BaseProcessor):
     """
     A processor for recognizing tables in the document.
 
-    Hybrid strategy: tables with good embedded pdftext use the simple
-    table-rec mode (rows/cols from the VLM, cell text from pdftext); tables
-    that need OCR use the full mode, where the VLM emits the complete table
-    HTML in one pass.
+    Strategy (both modes): the fast rf-detr/onnx table model detects the
+    row/column grid and cells are derived geometrically. Digital tables get
+    their cell text from pdftext. Tables on scanned/garbled pages (or whose
+    geometric result is degenerate) fall back to OCRing the table crop with
+    the recognition model, which emits the table HTML directly.
     """
 
     block_types = (BlockTypes.Table, BlockTypes.TableOfContents, BlockTypes.Form)
-    table_rec_mode: Annotated[
-        Literal["hybrid", "simple", "full"],
-        "Table recognition strategy. 'hybrid' uses simple mode for tables with good",
-        "embedded text and full (HTML) mode for tables needing OCR.",
-    ] = "hybrid"
-    simple_fallback_to_full: Annotated[
-        bool,
-        "Re-run degenerate simple-mode results through full (HTML) mode.",
-    ] = True
-    full_mode_token_floor: Annotated[
+    ocr_table_token_floor: Annotated[
         int,
-        "Minimum token budget for full-mode table recognition.",
+        "Minimum token budget when OCRing a scanned table crop to HTML.",
     ] = 2048
-    simple_mode_first_row_header: Annotated[
+    first_row_header: Annotated[
         bool,
-        "Mark the first row of simple-mode tables as a header row.",
+        "Mark the first row of geometric tables as a header row.",
     ] = True
     contained_block_types: Annotated[
         List[BlockTypes],
@@ -96,11 +89,13 @@ class TableProcessor(BaseProcessor):
 
     def __init__(
         self,
+        recognition_model: RecognitionPredictor,
         table_rec_model: TableRecPredictor,
         config=None,
     ):
         super().__init__(config)
 
+        self.recognition_model = recognition_model
         self.table_rec_model = table_rec_model
         # Conversion stats, useful for monitoring table rec quality
         self.table_stats = Counter()
@@ -113,16 +108,18 @@ class TableProcessor(BaseProcessor):
             return
 
         # Get pdftext cell text for tables on pages with good embedded text.
-        # Tables where pdftext finds nothing are flipped to ocr_block before
-        # mode routing.
+        # Tables where pdftext finds nothing are flipped to ocr_block.
         extract_blocks = [t for t in table_data if not t["ocr_block"]]
         self.assign_pdftext_lines(document, extract_blocks)
 
-        simple_data, full_data = self.partition_tables(table_data)
-        self.run_simple_mode(simple_data, full_data)
-        self.run_full_mode(document, full_data)
+        # Digital tables go through the geometric grid model; scanned/garbled
+        # ones (and geometric degenerates) get OCR'd to HTML.
+        structure_data = [t for t in table_data if not t["ocr_block"]]
+        ocr_data = [t for t in table_data if t["ocr_block"]]
+        self.run_structure_mode(structure_data, ocr_data)
+        self.run_ocr_mode(document, ocr_data)
 
-        self.assemble_cells(document, simple_data)
+        self.assemble_cells(document, structure_data)
         self.cleanup_contained_blocks(document, tables_by_page)
 
         # Release the cached raw pdftext pages - they hold char-level data
@@ -169,105 +166,87 @@ class TableProcessor(BaseProcessor):
                 )
         return table_data, tables_by_page
 
-    def partition_tables(self, table_data: list):
-        simple_data = []
-        full_data = []
-        for entry in table_data:
-            if self.table_rec_mode == "full":
-                use_full = True
-            elif self.table_rec_mode == "simple" or self.disable_ocr:
-                use_full = False
-            else:  # hybrid
-                use_full = entry["ocr_block"]
-
-            if use_full:
-                full_data.append(entry)
-            else:
-                simple_data.append(entry)
-        return simple_data, full_data
-
-    def run_simple_mode(self, simple_data: list, full_data: list):
-        """Run simple-mode table rec, assign pdftext text to the geometric
-        cells, and apply marker's cell postprocessing. Degenerate results are
-        re-routed to full mode."""
-        if not simple_data:
+    def run_structure_mode(self, structure_data: list, ocr_data: list):
+        """Detect the row/column grid with the fast table model, assign pdftext
+        text to the geometric cells, and apply marker's cell postprocessing.
+        Degenerate results (no grid, or text that won't fit the cells) are
+        re-routed to OCR-to-HTML."""
+        if not structure_data:
             return
 
-        results: List[TableResult] = self.table_rec_model.predict_simple(
-            [t["table_image"] for t in simple_data]
+        results: List[TableResult] = self.table_rec_model(
+            [t["table_image"] for t in structure_data]
         )
-        assert len(results) == len(simple_data), (
+        assert len(results) == len(structure_data), (
             "Number of table results should match the number of tables"
         )
 
-        for entry, result in zip(simple_data, results):
+        for entry, result in zip(structure_data, results):
             entry["cells"] = [
                 MarkerTableCell(
                     polygon=cell.polygon,
                     row_id=cell.row_id,
                     col_id=cell.col_id,
                     cell_id=cell.cell_id,
-                    is_header=self.simple_mode_first_row_header and cell.row_id == 0,
+                    is_header=self.first_row_header and cell.row_id == 0,
                 )
                 for cell in result.cells
             ]
             entry["unassigned_frac"] = self.assign_text_to_cells(entry)
 
             degenerate = result.error or len(entry["cells"]) == 0
-            mostly_unassigned = (
-                not entry["ocr_block"] and entry.get("unassigned_frac", 0) > 0.5
-            )
+            mostly_unassigned = entry.get("unassigned_frac", 0) > 0.5
             if degenerate or mostly_unassigned:
-                self.table_stats["tables_simple_degenerate"] += 1
-                if self.simple_fallback_to_full and not self.disable_ocr:
+                self.table_stats["tables_degenerate"] += 1
+                if not self.disable_ocr:
                     entry["cells"] = None
-                    full_data.append(entry)
+                    ocr_data.append(entry)
                 continue
 
-            self.table_stats["tables_simple"] += 1
+            self.table_stats["tables_structure"] += 1
 
-        # Drop entries that were re-routed to full mode
-        simple_data[:] = [t for t in simple_data if t.get("cells") is not None]
+        # Drop entries that were re-routed to OCR
+        structure_data[:] = [t for t in structure_data if t.get("cells") is not None]
 
-        self.split_combined_rows(simple_data)
-        self.combine_dollar_column(simple_data)
+        self.split_combined_rows(structure_data)
+        self.combine_dollar_column(structure_data)
 
-    def run_full_mode(self, document: Document, full_data: list):
-        """Full-mode table rec: the VLM emits the complete table HTML, which
-        is set directly on the block."""
-        if not full_data:
+    def run_ocr_mode(self, document: Document, ocr_data: list):
+        """OCR scanned/garbled table crops to HTML with the recognition model
+        (block mode, one box per table), setting the HTML on the block."""
+        if not ocr_data or self.disable_ocr:
             return
 
-        remaining = full_data
-        for attempt in range(2):
-            results = self.table_rec_model.predict_full(
-                [t["table_image"] for t in remaining],
-                counts=[
-                    max(t["token_count"], self.full_mode_token_floor) for t in remaining
-                ],
+        images = [t["table_image"] for t in ocr_data]
+        layout_results = []
+        for entry, image in zip(ocr_data, images):
+            w, h = image.size
+            box = LayoutBox(
+                polygon=[[0, 0], [w, 0], [w, h], [0, h]],
+                label="Table",
+                raw_label="Table",
+                position=0,
+                count=max(entry["token_count"], self.ocr_table_token_floor),
             )
-            failed = []
-            for entry, result in zip(remaining, results):
-                html = self.clean_table_html(result.html if not result.error else "")
-                if not html:
-                    failed.append(entry)
-                    continue
+            layout_results.append(LayoutResult(bboxes=[box], image_bbox=[0, 0, w, h]))
 
-                block = document.get_block(entry["block_id"])
-                block.structure = []
-                block.html = html
-                block.text_extraction_method = "surya"
-                self.table_stats["tables_full"] += 1
-
-            if not failed:
-                break
-            remaining = failed
-        else:
-            for entry in remaining:
-                self.table_stats["tables_full_failed"] += 1
-                logger.warning(
-                    f"Full-mode table recognition failed for block {entry['block_id']}"
-                )
+        self.recognition_model.disable_tqdm = self.disable_tqdm
+        results = self.recognition_model(
+            images=images, layout_results=layout_results, full_page=False
+        )
+        for entry, page_result in zip(ocr_data, results):
+            block_result = page_result.blocks[0] if page_result.blocks else None
+            raw = block_result.html if block_result and not block_result.error else ""
+            html = self.clean_table_html(raw)
+            if not html:
+                self.table_stats["tables_ocr_failed"] += 1
+                logger.warning(f"Table OCR failed for block {entry['block_id']}")
+                continue
+            block = document.get_block(entry["block_id"])
+            block.structure = []
+            block.html = html
+            block.text_extraction_method = "surya"
+            self.table_stats["tables_ocr"] += 1
 
     def clean_table_html(self, html: str | None) -> str:
         if not html:

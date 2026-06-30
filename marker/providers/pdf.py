@@ -390,6 +390,12 @@ class PdfProvider(BaseProvider):
             # Assume OCR failed if we have no text
             return True
 
+        # Collapse leader runs (TOC dot leaders, form underscores/dashes) before the
+        # ratio checks. They are legitimate typography, not garbled OCR, but their low
+        # alphanumeric density otherwise trips the heuristic and forces clean pages
+        # (e.g. tables of contents) into needless full-page OCR.
+        text = re.sub(r"(?:[.·•…_\-]\s*){3,}", " ", text)
+
         spaces = len(re.findall(r"\s+", text))
         alpha_chars = len(re.sub(r"\s+", "", text))
         if spaces / (alpha_chars + spaces) > self.ocr_space_threshold:
