@@ -3,7 +3,6 @@ from surya.inference import SuryaInferenceManager
 from surya.layout import LayoutPredictor
 from surya.ocr_error import OCRErrorPredictor
 from surya.recognition import RecognitionPredictor
-from surya.table_rec import TableRecPredictor
 
 
 def create_model_dict(
@@ -21,11 +20,12 @@ def create_model_dict(
       - fast (CPU): the lightweight rf-detr/onnx ``fast_layout_model`` + block-mode
         OCR, OCRing only garbled/empty content.
 
-    Table recognition uses the fast rf-detr/onnx ``table_rec_model`` in both
-    modes; ``recognition_model`` supplies HTML for scanned tables. The VLM
-    ``inference_manager`` is lazy - it only spawns a server when OCR is actually
-    needed (so clean digital docs in fast mode never start it). ``device``/
-    ``dtype`` apply only to the small torch ocr-error model.
+    Tables are reconstructed from the PDF text layer (pdftext heuristics) for
+    digital pages and from full-page OCR for scanned pages - there is no
+    dedicated table model. The VLM ``inference_manager`` is lazy - it only spawns
+    a server when OCR is actually needed (so clean digital docs in fast mode
+    never start it). ``device``/``dtype`` apply only to the small torch ocr-error
+    model.
     """
     manager = inference_manager or SuryaInferenceManager(method=inference_backend)
     return {
@@ -33,7 +33,6 @@ def create_model_dict(
         "layout_model": LayoutPredictor(manager),
         "fast_layout_model": FastLayoutPredictor(),
         "recognition_model": RecognitionPredictor(manager),
-        "table_rec_model": TableRecPredictor(),
         "ocr_error_model": OCRErrorPredictor(
             device=device,
             dtype=dtype,

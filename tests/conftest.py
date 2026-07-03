@@ -47,11 +47,6 @@ def recognition_model(model_dict):
 
 
 @pytest.fixture(scope="session")
-def table_rec_model(model_dict):
-    yield model_dict["table_rec_model"]
-
-
-@pytest.fixture(scope="session")
 def ocr_error_model(model_dict):
     yield model_dict["ocr_error_model"]
 

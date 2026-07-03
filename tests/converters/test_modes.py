@@ -32,12 +32,12 @@ def test_balanced_mode_digital(model_dict, temp_doc):
 
 @pytest.mark.filename("pres.pdf")
 @pytest.mark.config({"page_range": [4]})
-def test_fast_mode_table(pdf_document, recognition_model, table_rec_model):
+def test_fast_mode_table(pdf_document, recognition_model):
     # The table processor (fast geometric model) runs the same in both modes.
     from marker.processors.table import TableProcessor
     from marker.schema import BlockTypes
 
-    processor = TableProcessor(recognition_model, table_rec_model)
+    processor = TableProcessor(recognition_model)
     processor(pdf_document)
     tables = pdf_document.contained_blocks((BlockTypes.Table,))
     assert len(tables) > 0

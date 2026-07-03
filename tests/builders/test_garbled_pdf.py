@@ -7,12 +7,12 @@ from marker.schema import BlockTypes
 
 
 @pytest.mark.filename("water_damage.pdf")
-def test_garbled_pdf(pdf_document, recognition_model, table_rec_model):
+def test_garbled_pdf(pdf_document, recognition_model):
     tables = pdf_document.pages[0].contained_blocks(pdf_document, (BlockTypes.Table,))
     assert len(tables) > 0
 
     # Garbled page - the table goes through full-mode OCR table rec
-    processor = TableProcessor(recognition_model, table_rec_model)
+    processor = TableProcessor(recognition_model)
     processor(pdf_document)
 
     table = pdf_document.pages[0].contained_blocks(pdf_document, (BlockTypes.Table,))[0]
