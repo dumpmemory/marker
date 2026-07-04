@@ -76,24 +76,6 @@ class LineBuilder(BaseBuilder):
         "multi-column pages (olmocr-bench order tests: 75% vs 56%). The learned",
         "head is still used on OCR pages, which have no pdftext positions.",
     ] = True
-    large_page_pdftext_order: Annotated[
-        bool,
-        "On very large clean-digital (pdftext) pages - newspapers, broadsheets -",
-        "use the PDF's character reading order instead of the learned order head.",
-        "The order model is trained at a fixed small resolution with a box-count",
-        "cap, so it degrades on big multi-column pages where pdftext's column-aware",
-        "char stream stays reliable.",
-    ] = True
-    large_page_min_long_side: Annotated[
-        int,
-        "Long side (px at lowres dpi) above which a pdftext page counts as large",
-        "for large_page_pdftext_order.",
-    ] = 2000
-    large_page_min_short_side: Annotated[
-        int,
-        "Short side (px at lowres dpi) above which a pdftext page counts as large",
-        "for large_page_pdftext_order.",
-    ] = 1000
     mode: Annotated[
         str,
         "Conversion mode. 'balanced' promotes any page with flagged blocks to",
@@ -155,13 +137,6 @@ class LineBuilder(BaseBuilder):
         if not self.disable_ocr:
             self.flag_bad_blocks(document)
 
-    def _is_large_page(self, page: PageGroup) -> bool:
-        w, h = page.get_image(highres=False).size
-        return (
-            max(w, h) >= self.large_page_min_long_side
-            and min(w, h) >= self.large_page_min_short_side
-        )
-
     def order_blocks_by_reading_order(self, document: Document):
         """Order layout blocks on pdftext pages by the PDF's character reading
         order, instead of the layout model's position.
@@ -175,19 +150,14 @@ class LineBuilder(BaseBuilder):
         blocks by ``span.minimum_position`` (pdftext char start index =
         column-aware reading order) instead.
 
-        Applies to a pdftext page when ``use_pdftext_reading_order`` forces it
-        for all pages, or ``large_page_pdftext_order`` and the page is large.
         Text-less blocks (figures, empty boxes) keep their placement relative to
         the text block they followed. OCR'd ("surya") pages are left untouched
         (no pdftext positions - they rely on the learned order head).
         """
+        if not self.use_pdftext_reading_order:
+            return
         for page in document.pages:
             if page.text_extraction_method != "pdftext" or not page.structure:
-                continue
-            apply = self.use_pdftext_reading_order or (
-                self.large_page_pdftext_order and self._is_large_page(page)
-            )
-            if not apply:
                 continue
 
             order = []

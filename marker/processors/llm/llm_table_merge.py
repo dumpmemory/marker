@@ -25,10 +25,6 @@ class LLMTableMergeProcessor(BaseLLMComplexBlockProcessor):
         float,
         "The minimum height ratio relative to the page for the first table in a pair to be considered for merging.",
     ] = 0.6
-    table_start_threshold: Annotated[
-        float,
-        "The maximum percentage down the page the second table can start to be considered for merging.",
-    ] = 0.2
     vertical_table_height_threshold: Annotated[
         float, "The height tolerance for 2 adjacent tables to be merged into one."
     ] = 0.25

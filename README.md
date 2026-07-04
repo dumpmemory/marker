@@ -105,7 +105,7 @@ First, some configuration:
 - Marker runs layout, OCR, and table recognition through a single surya VLM, served by a local inference server (used for OCR in both modes, and for layout in balanced mode).  The server is spawned automatically on first use - vLLM (docker) on NVIDIA GPUs, llama.cpp elsewhere.  You can also point marker at an already-running server with `SURYA_INFERENCE_URL=http://host:port/v1`.
 - Useful server settings (all surya env vars): `SURYA_INFERENCE_BACKEND` (`vllm` or `llamacpp`), `SURYA_INFERENCE_PARALLEL` (concurrent requests — by default this auto-scales to the server's capacity: the GPU's `max_num_seqs` under vllm, a conservative slot count under llama.cpp; set an int only to override), `SURYA_INFERENCE_KEEP_ALIVE` (keep the server running between invocations), `VLLM_GPUS` (GPU indices for the server).
 - Some PDFs, even digital ones, have bad text in them.  Set `--force_ocr` to force OCR on all pages, or the `strip_existing_ocr` to keep all digital text, and strip out any existing OCR text.
-- If you care about inline math, set `force_ocr` to convert inline math to LaTeX.
+- Inline math is converted to LaTeX automatically in balanced mode (`ocr_inline_math`); in fast mode, set `--force_ocr` or `--ocr_inline_math` to get the same.
 
 ## Interactive App
 
@@ -130,7 +130,7 @@ Options:
 - `--output_dir PATH`: Directory where output files will be saved. Defaults to the value specified in settings.OUTPUT_DIR.
 - `--paginate_output`: Paginates the output, using `\n\n{PAGE_NUMBER}` followed by `-` * 48, then `\n\n`
 - `--use_llm`: Uses an LLM to improve accuracy.  You will need to configure the LLM backend - see [below](#llm-services).
-- `--force_ocr`: Force OCR processing on the entire document, even for pages that might contain extractable text.  This will also format inline math properly.
+- `--force_ocr`: Force OCR processing on the entire document, even for pages that might contain extractable text.
 - `--block_correction_prompt`: if LLM mode is active, an optional prompt that will be used to correct the output of marker.  This is useful for custom formatting or logic that you want to apply to the output.
 - `--strip_existing_ocr`: Remove all existing OCR text in the document and re-OCR with surya.
 - `--redo_inline_math`: If you want the absolute highest quality inline math conversion, use this along with `--use_llm`.
@@ -152,11 +152,16 @@ marker /path/to/input/folder
 ```
 
 - `marker` supports all the same options from `marker_single` above.
-- `--workers` is the number of conversion workers to run simultaneously.  This is automatically set by default, but you can increase it to increase throughput, at the cost of more CPU usage.  All workers share a single inference server, which the parent process spawns - GPU parallelism is handled server-side (`SURYA_INFERENCE_PARALLEL`).
+- `--workers` is the number of conversion workers to run simultaneously.  This is automatically set by default, but you can increase it to increase throughput, at the cost of more CPU usage.  All workers share a single inference server, which the parent process spawns.
+- The parent budgets total VLM concurrency automatically: it reads the server's capacity and splits it across workers (aggregate in-flight ≈ 1.5× capacity), so adding workers never over-queues the server.  Set `SURYA_INFERENCE_PARALLEL` yourself only to override.
+- With `--disable_ocr` no inference server is started at all, and the pool is sized purely by CPU cores.
 
-## Convert multiple files on multiple GPUs
+### Batch sizing cheat sheet (e.g. 1000 docs)
 
-For multi-GPU machines, run a single `marker` command and let the inference server span GPUs by setting `VLLM_GPUS` (e.g. `VLLM_GPUS=0,1,2,3`).  The old `marker_chunk_convert` script assumed one model instance per GPU - with the shared inference server, chunks on the same machine will attach to the first chunk's server.  To run truly separate servers, start one per GPU manually and pass a distinct `SURYA_INFERENCE_URL` per chunk.
+- **One GPU machine**: `marker /folder --output_dir out` — defaults handle it: one vllm server, a CPU-sized worker pool, concurrency budgeted to the GPU.  Add `--mode fast` if you want cheaper/faster conversion for mostly-digital corpora.
+- **Multi-GPU machine**: same single command, with the server spanning GPUs: `VLLM_GPUS=0,1,2,3 marker /folder ...`
+- **Multiple machines**: shard the file list — run one `marker` per node with `--num_chunks <nodes> --chunk_idx <this node>`.  Each node spawns its own server.
+- **CPU-only / no VLM**: `marker /folder --disable_ocr` (pure text-layer extraction; equations and scanned pages are skipped).
 
 ## Use from python
 

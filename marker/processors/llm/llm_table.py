@@ -28,10 +28,6 @@ class LLMTableProcessor(BaseLLMComplexBlockProcessor):
         int,
         "The maximum number of rows in a table to process with the LLM processor.  Beyond this will be skipped.",
     ] = 175
-    table_image_expansion_ratio: Annotated[
-        float,
-        "The ratio to expand the image by when cropping.",
-    ] = 0
     rotation_max_wh_ratio: Annotated[
         float,
         "The maximum width/height ratio for table cells for a table to be considered rotated.",

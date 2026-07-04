@@ -102,12 +102,18 @@ def process_single_pdf(args):
 
 @click.command(cls=CustomClickPrinter)
 @click.argument("in_folder", type=str)
-@click.option("--chunk_idx", type=int, default=0, help="Chunk index to convert")
+@click.option(
+    "--chunk_idx",
+    type=int,
+    default=0,
+    help="This node's shard index (multi-node: give each node a distinct chunk_idx).",
+)
 @click.option(
     "--num_chunks",
     type=int,
     default=1,
-    help="Number of chunks being processed in parallel",
+    help="Shard the file list into this many chunks (multi-node batch runs: "
+    "one marker invocation per node, each with its own inference server).",
 )
 @click.option(
     "--max_files", type=int, default=None, help="Maximum number of pdfs to convert"
@@ -124,7 +130,7 @@ def process_single_pdf(args):
 @click.option(
     "--max_tasks_per_worker",
     type=int,
-    default=50,
+    default=200,
     help="Maximum number of tasks per worker process before recycling.",
 )
 @click.option(
@@ -163,17 +169,37 @@ def convert_cli(in_folder: str, **kwargs):
 
     chunk_idx = kwargs["chunk_idx"]
 
-    # Spawn (or attach to) the shared inference server from the parent process
-    # so it outlives worker recycling and is cleaned up when this process
-    # exits. Workers attach to it via SURYA_INFERENCE_URL.
-    from surya.inference import SuryaInferenceManager
+    no_server = bool(kwargs.get("disable_ocr"))
+    if no_server:
+        # Pure text-layer mode: no VLM at all, so no server and the pool is
+        # sized purely by CPU cores.
+        workers = kwargs["workers"] or get_worker_count(no_server=True)
+        total_processes = max(1, min(len(files_to_convert), workers))
+    else:
+        # Spawn (or attach to) the shared inference server from the parent
+        # process so it outlives worker recycling and is cleaned up when this
+        # process exits. Workers attach to it via SURYA_INFERENCE_URL.
+        from surya.inference import SuryaInferenceManager
 
-    manager = SuryaInferenceManager(lazy=False)
-    server_handle = manager.backend.start()  # Idempotent, returns the handle
-    os.environ["SURYA_INFERENCE_URL"] = server_handle.base_url
+        manager = SuryaInferenceManager(lazy=False)
+        server_handle = manager.backend.start()  # Idempotent, returns handle
+        os.environ["SURYA_INFERENCE_URL"] = server_handle.base_url
 
-    workers = kwargs["workers"] or get_worker_count()
-    total_processes = max(1, min(len(files_to_convert), workers))
+        workers = kwargs["workers"] or get_worker_count()
+        total_processes = max(1, min(len(files_to_convert), workers))
+
+        # Budget aggregate client concurrency to ~1.5x the server's capacity:
+        # each worker's client otherwise fans out to the FULL capacity on its
+        # own, so N workers would queue N-times-capacity requests. Respect an
+        # explicit SURYA_INFERENCE_PARALLEL from the user.
+        if "SURYA_INFERENCE_PARALLEL" not in os.environ:
+            capacity = manager.capacity()
+            per_worker = max(1, math.ceil(capacity * 1.5 / total_processes))
+            os.environ["SURYA_INFERENCE_PARALLEL"] = str(per_worker)
+            logger.info(
+                f"Server capacity {capacity}; using {per_worker} concurrent "
+                f"requests per worker across {total_processes} workers"
+            )
 
     # The VLM runs on the server; workers only hold the small ocr error model.
     # Keep it off the GPU in multi-worker mode - the server owns the VRAM.
