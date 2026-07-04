@@ -71,10 +71,11 @@ class LineBuilder(BaseBuilder):
     keep_chars: Annotated[bool, "Keep individual characters."] = False
     use_pdftext_reading_order: Annotated[
         bool,
-        "Force the PDF's character reading order on ALL pdftext pages, instead",
-        "of surya's learned reading-order head. Off by default (we defer to the",
-        "learned order); see large_page_pdftext_order for the large-page case.",
-    ] = False
+        "Order layout blocks on pdftext pages by the PDF's character reading",
+        "order. On by default: it beats surya's learned reading-order head on",
+        "multi-column pages (olmocr-bench order tests: 75% vs 56%). The learned",
+        "head is still used on OCR pages, which have no pdftext positions.",
+    ] = True
     large_page_pdftext_order: Annotated[
         bool,
         "On very large clean-digital (pdftext) pages - newspapers, broadsheets -",
@@ -93,11 +94,16 @@ class LineBuilder(BaseBuilder):
         "Short side (px at lowres dpi) above which a pdftext page counts as large",
         "for large_page_pdftext_order.",
     ] = 1000
+    mode: Annotated[
+        str,
+        "Conversion mode. 'balanced' promotes any page with flagged blocks to",
+        "full-page OCR; 'fast' repairs flagged blocks individually.",
+    ] = "balanced"
     block_ocr_promote_fraction: Annotated[
         float,
-        "If more than this fraction of a (mostly-good) page's text blocks have",
-        "bad or missing embedded text, OCR the whole page instead of the",
-        "individual blocks.",
+        "In fast mode: if more than this fraction of a (mostly-good) page's",
+        "text blocks have bad or missing embedded text, OCR the whole page",
+        "instead of the individual blocks.",
     ] = 0.5
     min_ocr_block_area_fraction: Annotated[
         float,
@@ -116,8 +122,10 @@ class LineBuilder(BaseBuilder):
         "page-level ocr-error P(bad) is at least this. Confidently-clean pages",
         "below it skip it - the page-level model already cleared the whole page.",
     ] = 0.05
-    # Blocks handled elsewhere (tables/equations) or with no text - never
-    # eligible for block-level text OCR.
+    # Blocks handled elsewhere (tables/equations), with no text, or dropped from
+    # output by default (page headers/footers - OCRing them wastes a VLM call,
+    # and a single flagged footer forces an otherwise-clean doc to spawn the
+    # inference server) - never eligible for block-level text OCR.
     block_ocr_skip_types: Tuple[BlockTypes, ...] = (
         BlockTypes.Picture,
         BlockTypes.Figure,
@@ -127,6 +135,8 @@ class LineBuilder(BaseBuilder):
         BlockTypes.TableOfContents,
         BlockTypes.Equation,
         BlockTypes.ChemicalBlock,
+        BlockTypes.PageHeader,
+        BlockTypes.PageFooter,
     )
 
     def __init__(
@@ -451,11 +461,17 @@ class LineBuilder(BaseBuilder):
                 if label == "bad":
                     block.text_extraction_method = "surya"
 
-        # Promote pages where most text blocks are bad to full-page OCR
+        # Promote bad pages to full-page OCR. Balanced promotes on ANY flagged
+        # block (re-reading the whole page in context is the higher-quality
+        # repair); fast promotes only when most blocks are bad, and fixes the
+        # rest surgically with per-block OCR (cheaper than a page decode).
+        promote_fraction = (
+            0.0 if self.mode == "balanced" else self.block_ocr_promote_fraction
+        )
         for page in document.pages:
             blocks = page_text_blocks.get(page.page_id)
             if not blocks:
                 continue
             bad = sum(1 for b in blocks if b.text_extraction_method == "surya")
-            if bad / len(blocks) > self.block_ocr_promote_fraction:
+            if bad / len(blocks) > promote_fraction:
                 page.text_extraction_method = "surya"

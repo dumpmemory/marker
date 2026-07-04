@@ -98,9 +98,10 @@ pip install marker-pdf[full]
 First, some configuration:
 
 - **Mode** (`--mode balanced|fast`, default `balanced`):
-  - `balanced` (best on a **GPU**) uses the surya VLM for layout and full-page OCR — highest quality.
-  - `fast` (optimized for **CPU**) uses lightweight rf-detr/onnx detectors for layout and tables, extracts text with pdftext, and only OCRs content that is garbled or has no embedded text. Pages that need OCR wholesale are still done in a single full-page pass (faster on CPU and more accurate than many small crops); only individual garbled/empty blocks on an otherwise-clean page are OCR'd block-by-block. A clean digital document in fast mode never starts the VLM server, so it runs quickly on CPU.
-  - Table structure uses the fast rf-detr/onnx model in **both** modes (cell text comes from pdftext, or from OCR for scanned tables).
+  - `balanced` (best on a **GPU**) uses the surya VLM for layout, OCRs inline math, and re-OCRs the **whole page** whenever any of its embedded text is bad — highest quality.
+  - `fast` (optimized for **CPU**) uses the lightweight rf-detr layout detector, extracts text with pdftext, and keeps VLM use minimal: equations, surgical block-level repair of individual garbled/empty blocks, and a single full-page pass only for pages that are scanned or mostly bad. A clean digital document without equations never starts the VLM server.
+  - Tables are reconstructed from the PDF text layer in both modes (scanned tables come from the full-page OCR); low-confidence reconstructions fall back to the VLM, with a stricter bar in balanced.
+  - `--disable_ocr` turns off **all** VLM calls (including equations) in either mode — pure text-layer extraction.
 - Marker runs layout, OCR, and table recognition through a single surya VLM, served by a local inference server (used for OCR in both modes, and for layout in balanced mode).  The server is spawned automatically on first use - vLLM (docker) on NVIDIA GPUs, llama.cpp elsewhere.  You can also point marker at an already-running server with `SURYA_INFERENCE_URL=http://host:port/v1`.
 - Useful server settings (all surya env vars): `SURYA_INFERENCE_BACKEND` (`vllm` or `llamacpp`), `SURYA_INFERENCE_PARALLEL` (concurrent requests — by default this auto-scales to the server's capacity: the GPU's `max_num_seqs` under vllm, a conservative slot count under llama.cpp; set an int only to override), `SURYA_INFERENCE_KEEP_ALIVE` (keep the server running between invocations), `VLLM_GPUS` (GPU indices for the server).
 - Some PDFs, even digital ones, have bad text in them.  Set `--force_ocr` to force OCR on all pages, or the `strip_existing_ocr` to keep all digital text, and strip out any existing OCR text.

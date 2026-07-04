@@ -12,6 +12,7 @@ from marker.processors.table_recon import (
 )
 from marker.schema import BlockTypes
 from marker.schema.document import Document
+from marker.schema.labels import block_type_to_surya_label
 from marker.util import matrix_intersection_area
 from marker.logger import get_logger
 
@@ -32,11 +33,14 @@ class TableProcessor(BaseProcessor):
     """
 
     block_types = (BlockTypes.Table, BlockTypes.TableOfContents, BlockTypes.Form)
+    mode: Annotated[str, "Conversion mode ('balanced' | 'fast')."] = "balanced"
     min_recon_score: Annotated[
         float,
         "Minimum pdftext reconstruction judge score to accept; below this a",
-        "digital table falls back to recognition OCR.",
-    ] = 0.5
+        "digital table falls back to recognition OCR. None = auto by mode:",
+        "0.75 in balanced (spend VLM calls on low-confidence tables), 0.5 in",
+        "fast (keep VLM fallback rare).",
+    ] = None
     ocr_table_token_floor: Annotated[
         int,
         "Minimum token budget when OCRing a table crop to HTML.",
@@ -114,7 +118,10 @@ class TableProcessor(BaseProcessor):
         if not result:
             return None
         html, score = result
-        if score < self.min_recon_score:
+        min_score = self.min_recon_score
+        if min_score is None:
+            min_score = 0.75 if self.mode == "balanced" else 0.5
+        if score < min_score:
             return None
         return html
 
@@ -132,12 +139,13 @@ class TableProcessor(BaseProcessor):
             entries.append((block, block.layout_token_count or 0))
 
         layout_results = []
-        for image, (_block, token_count) in zip(images, entries):
+        for image, (block, token_count) in zip(images, entries):
             w, h = image.size
+            label = block_type_to_surya_label(block.block_type) or "Table"
             box = LayoutBox(
                 polygon=[[0, 0], [w, 0], [w, h], [0, h]],
-                label="Table",
-                raw_label="Table",
+                label=label,
+                raw_label=label,
                 position=0,
                 count=max(token_count, self.ocr_table_token_floor),
             )
@@ -150,7 +158,12 @@ class TableProcessor(BaseProcessor):
         for (block, _tc), page_result in zip(entries, results):
             block_result = page_result.blocks[0] if page_result.blocks else None
             raw = block_result.html if block_result and not block_result.error else ""
-            html = self.clean_table_html(raw)
+            if block.block_type == BlockTypes.Form:
+                # Forms rarely OCR to <table> html - accept any cleaned output
+                # (matches how full-page OCR sets form html unconditionally).
+                html = self.clean_form_html(raw)
+            else:
+                html = self.clean_table_html(raw)
             if not html:
                 self.table_stats["tables_ocr_failed"] += 1
                 logger.warning(f"Table OCR failed for block {block.id}")
@@ -174,6 +187,12 @@ class TableProcessor(BaseProcessor):
         if table is None or not table.find_all(["td", "th"]):
             return ""
         return str(soup).strip()
+
+    def clean_form_html(self, html: str | None) -> str:
+        if not html or _detect_repeat_loop(html):
+            return ""
+        # Balance any truncated tags; no <table> requirement for forms.
+        return str(BeautifulSoup(html, "html.parser")).strip()
 
     def cleanup_contained_blocks(self, document: Document, tables_by_page: dict):
         # Clean out other blocks inside the table

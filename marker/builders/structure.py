@@ -48,6 +48,10 @@ class StructureBuilder(BaseBuilder):
             if block.block_type != BlockTypes.ListGroup or block.html:
                 continue
             if not block.structure:
+                # Layout emitted a list region that never received children -
+                # drop it rather than rendering an empty <ul>.
+                block.removed = True
+                page.structure.remove(block_id)
                 continue
 
             lines = block.structure_blocks(page)

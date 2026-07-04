@@ -17,7 +17,7 @@ from collections import Counter, defaultdict
 from html import escape
 from statistics import median
 
-MIN_CELLS_PER_ROW = 3  # a "data row" has >= this many spans
+MIN_CELLS_PER_ROW = 2  # a "data row" has >= this many tokens (2 supports two-column tables; the judge filters degenerate grids)
 MIN_TABLE_ROWS = 3  # need at least this many data rows to treat it as a table
 GAP_MIN_PT = 2.5  # projection: gaps narrower than this don't separate columns
 PROJ_FRACS = (0.01, 0.03, 0.10)  # projection row-frequency thresholds to sweep
@@ -59,7 +59,10 @@ def _find_header_band(lines):
     ys = [
         y0
         for spans, y0, _ in lines
-        if len(spans) >= MIN_CELLS_PER_ROW and _numfrac(spans) >= 0.5
+        # Strictly more numeric than text: a 2-token (title, page#) TOC row is
+        # exactly 0.5 and must not anchor the data region, or everything above
+        # it gets swallowed into the header band.
+        if len(spans) >= MIN_CELLS_PER_ROW and _numfrac(spans) > 0.5
     ]
     return min(ys) if ys else None
 
@@ -282,6 +285,34 @@ def _attach_wrapped_lines(lines, first_data_y, grid_y, cut_xs):
             target[j] = f"{target[j]} {t}".strip() if target[j] else t
 
 
+_SYMBOL_ONLY = re.compile(r"^[^\w]{1,2}$")
+
+
+def _merge_marker_columns(names, grid):
+    """Merge symbol-marker columns into their right neighbor.
+
+    A column whose every non-empty DATA value is a short non-alphanumeric
+    symbol (checkboxes, bullets, tick marks) is a row *marker*, not a data
+    column - keeping it separate splits "(checkbox) CODE" into two cells and
+    shifts the header row out of alignment with the data columns. Runs after
+    header extraction so the header row doesn't mask an all-symbol column."""
+    if not grid:
+        return names, grid
+    k = len(grid[0])
+    j = 0
+    while k > 1 and j < k - 1:
+        vals = [row[j] for row in grid if row[j].strip()]
+        if len(vals) >= 2 and all(_SYMBOL_ONLY.match(v.strip()) for v in vals):
+            for row in grid:
+                row[j : j + 2] = [f"{row[j]} {row[j + 1]}".strip()]
+            if names:
+                names[j : j + 2] = [f"{names[j]} {names[j + 1]}".strip()]
+            k -= 1
+        else:
+            j += 1
+    return names, grid
+
+
 def _build_html(names, grid, has_header: bool) -> str:
     out = ["<table>"]
     if has_header:
@@ -295,27 +326,75 @@ def _build_html(names, grid, has_header: bool) -> str:
     return "".join(out)
 
 
-def table_lines_from_pdftext(pdftext_page: dict, bbox) -> list:
-    """Extract ``[(spans, y0, y1)]`` lines (spans = ``[(text, x0, x1)]``) from a
-    cached pdftext page, keeping only spans whose center falls inside ``bbox``
-    (x0, y0, x1, y1, in pdftext/PDF-point coordinates). Feeds
-    reconstruct_table_html."""
+def _line_tokens(line: dict, bbox):
+    """Tokenize a pdftext line into (text, x0, x1) cells inside ``bbox``.
+
+    Prefer WORD-level tokens split on intra-line character gaps: pdftext often
+    merges adjacent table cells into one span, which collapses the column
+    structure the grid heuristics rely on. Re-splitting the chars at gaps
+    wider than ~a quarter of the line height recovers per-cell tokens. Falls
+    back to raw spans when char data isn't kept."""
     bx0, by0, bx1, by1 = bbox
+
+    def inside(x0, y0, x1, y1):
+        return bx0 <= (x0 + x1) / 2 <= bx1 and by0 <= (y0 + y1) / 2 <= by1
+
+    tokens = []
+    have_chars = False
+    for s in line.get("spans", []):
+        chars = s.get("chars") or []
+        if not chars:
+            continue
+        have_chars = True
+        cur = None  # [text, x0, x1]
+        for c in chars:
+            cx0, cy0, cx1, cy1 = c["bbox"]
+            if not inside(cx0, cy0, cx1, cy1):
+                continue
+            ch = c.get("char", "")
+            # Split threshold: half the char height. 0.25x mis-split words in
+            # condensed fonts (letter gaps can reach ~0.3x height); real cell
+            # and column gaps sit well above 0.5x.
+            gap = 0.5 * max(cy1 - cy0, 1.0)
+            if cur is None:
+                cur = [ch, cx0, cx1]
+            elif cx0 - cur[2] > gap:
+                tokens.append(cur)
+                cur = [ch, cx0, cx1]
+            else:
+                cur[0] += ch
+                cur[2] = cx1
+        if cur is not None:
+            tokens.append(cur)
+
+    if not have_chars:
+        # No char data: fall back to span-level tokens.
+        for s in line.get("spans", []):
+            t = (s.get("text") or "").strip()
+            sx0, sy0, sx1, sy1 = s["bbox"]
+            if t and inside(sx0, sy0, sx1, sy1):
+                tokens.append([t, sx0, sx1])
+
+    out = []
+    for text, x0, x1 in tokens:
+        text = text.strip()
+        if text and not _LEADER_ONLY.match(text):
+            out.append((text, round(x0, 1), round(x1, 1)))
+    return out
+
+
+def table_lines_from_pdftext(pdftext_page: dict, bbox) -> list:
+    """Extract ``[(tokens, y0, y1)]`` lines (tokens = ``[(text, x0, x1)]``) from a
+    cached pdftext page, restricted to ``bbox`` (x0, y0, x1, y1, in pdftext/PDF
+    points). Tokens are word-level (see _line_tokens). Feeds
+    reconstruct_table_html."""
     lines = []
     for block in pdftext_page.get("blocks", []):
         for line in block.get("lines", []):
-            spans = []
-            for s in line.get("spans", []):
-                t = (s.get("text") or "").strip()
-                if not t or _LEADER_ONLY.match(t):
-                    continue
-                sx0, sy0, sx1, sy1 = s["bbox"]
-                cx, cy = (sx0 + sx1) / 2, (sy0 + sy1) / 2
-                if bx0 <= cx <= bx1 and by0 <= cy <= by1:
-                    spans.append((t, round(sx0, 1), round(sx1, 1)))
-            if spans:
+            toks = _line_tokens(line, bbox)
+            if toks:
                 lb = line.get("bbox") or [0, 0, 0, 0]
-                lines.append((spans, round(lb[1], 1), round(lb[3], 1)))
+                lines.append((toks, round(lb[1], 1), round(lb[3], 1)))
     return lines
 
 
@@ -383,5 +462,7 @@ def reconstruct_table_html(lines):
         names, grid, has_header = grid[0], grid[1:], True
         if len(grid) < 1:
             return None
+
+    names, grid = _merge_marker_columns(names, grid)
 
     return _build_html(names, grid, has_header), score

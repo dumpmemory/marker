@@ -110,7 +110,9 @@ class OcrBuilder(BaseBuilder):
 
         # Individual blocks on otherwise-good pages whose embedded text was
         # missing or garbled get OCR'd in place, keeping the rest of the
-        # page's pdftext content.
+        # page's pdftext content. (In balanced mode LineBuilder promotes any
+        # page with flagged blocks to full-page OCR, so this only fires in
+        # fast mode - the cheap, surgical repair.)
         self.ocr_flagged_blocks(document)
 
     def ocr_flagged_blocks(self, document: Document):
