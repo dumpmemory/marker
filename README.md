@@ -47,13 +47,13 @@ Commercial self-hosting requires a license — see [Commercial usage](#commercia
 
 Marker benchmarks favorably compared to cloud services like Llamaparse and Mathpix, as well as other open source tools.
 
-The above results are running single PDF pages serially.  Marker is significantly faster when running in batch mode, with a projected throughput of 25 pages/second on an H100.
+The above results are running single PDF pages serially.  Marker is significantly faster when running in batch mode, since the inference server batches requests across workers.  (These benchmark numbers predate the current VLM-based release - refreshed numbers are coming.)
 
 See [below](#benchmarks) for detailed speed and accuracy benchmarks, and instructions on how to run your own benchmarks.
 
 ## Hybrid Mode
 
-For the highest accuracy, pass the `--use_llm` flag to use an LLM alongside marker.  This will do things like merge tables across pages, handle inline math, format tables properly, and extract values from forms.  It can use any gemini or ollama model.  By default, it uses `gemini-2.0-flash`.  See [below](#llm-services) for details.
+For the highest accuracy, pass the `--use_llm` flag to use an LLM alongside marker.  This will do things like merge tables across pages, handle inline math, format tables properly, and extract values from forms.  It works with Gemini, Claude, OpenAI-compatible, Azure, Vertex, or Ollama models.  By default, it uses `gemini-3.5-flash`.  See [below](#llm-services) for details.
 
 Here is a table benchmark comparing marker, gemini flash alone, and marker with use_llm:
 
@@ -112,9 +112,10 @@ First, some configuration:
 I've included a streamlit app that lets you interactively try marker with some basic options.  Run it with:
 
 ```shell
-pip install streamlit streamlit-ace
 marker_gui
 ```
+
+There is also a structured-extraction playground: `marker_extract`.
 
 ## Convert a single file
 
@@ -125,6 +126,8 @@ marker_single /path/to/file.pdf
 You can pass in PDFs or images.
 
 Options:
+- `--mode [balanced|fast]`: Conversion mode (see above).  Defaults to `balanced`.
+- `--disable_ocr`: Never call the VLM - pure text-layer extraction (equations and scanned pages are skipped).
 - `--page_range TEXT`: Specify which pages to process. Accepts comma-separated page numbers and ranges. Example: `--page_range "0,5-10,20"` will process pages 0, 5 through 10, and page 20.
 - `--output_format [markdown|json|html|chunks]`: Specify the format for the output results.
 - `--output_dir PATH`: Directory where output files will be saved. Defaults to the value specified in settings.OUTPUT_DIR.
@@ -143,7 +146,7 @@ Options:
 - `--llm_service`: Which llm service to use if `--use_llm` is passed.  This defaults to `marker.services.gemini.GoogleGeminiService`.
 - `--help`: see all of the flags that can be passed into marker.  (it supports many more options then are listed above)
 
-The list of supported languages for surya OCR is [here](https://github.com/VikParuchuri/surya/blob/master/surya/recognition/languages.py).  If you don't need OCR, marker can work with any language.
+OCR runs through the surya VLM, which is multilingual - see the [surya README](https://github.com/datalab-to/surya) for details.  If you don't need OCR, marker can work with any language.
 
 ## Convert multiple files
 
@@ -246,7 +249,7 @@ rendered = converter("FILEPATH")
 text, _, images = text_from_rendered(rendered)
 ```
 
-This takes all the same configuration as the PdfConverter.  You can specify the configuration `force_layout_block=Table` to avoid layout detection and instead assume every page is a table.  Set `output_format=json` to also get cell bounding boxes.
+This takes all the same configuration as the PdfConverter.  You can specify the configuration `force_layout_block=Table` to avoid layout detection and instead assume every page is a table.  Tables are emitted as HTML (`<table>`) blocks; `output_format=json` gives you the table blocks with their page bounding boxes.
 
 You can also run this via the CLI with
 ```shell
@@ -255,7 +258,7 @@ marker_single FILENAME --use_llm --force_layout_block Table --converter_cls mark
 
 ### OCR Only
 
-If you only want to run OCR, you can also do that through the `OCRConverter`.  Set `--keep_chars` to keep individual characters and bounding boxes.
+If you only want to run OCR, you can also do that through the `OCRConverter`.  Set `--keep_chars` to keep individual characters and bounding boxes (digital PDFs only - pages that go through the VLM return block-level HTML without character boxes).
 
 ```python
 from marker.converters.ocr import OCRConverter
@@ -462,7 +465,7 @@ There are some settings that you may find useful if things aren't working the wa
 
 - If you have issues with accuracy, try setting `--use_llm` to use an LLM to improve quality.  You must set `GOOGLE_API_KEY` to a Gemini API key for this to work.
 - Make sure to set `force_ocr` if you see garbled text - this will re-OCR the document.
-- `TORCH_DEVICE` - set this to force marker to use a given torch device for inference.
+- `TORCH_DEVICE` - set this to force the small local models (ocr error detection) onto a given torch device.  The VLM runs in the inference server - control its placement with `SURYA_INFERENCE_BACKEND` / `VLLM_GPUS`.
 - If you're getting out of memory errors, decrease worker count.  You can also try splitting up long PDFs into multiple files.
 
 ## Debugging
@@ -504,11 +507,7 @@ Benchmarks were run on an H100 for markjer and docling - llamaparse and mathpix 
 
 We benchmarked throughput using a [single long PDF](https://www.greenteapress.com/thinkpython/thinkpython.pdf).
 
-| Method  | Time per page | Time per document | VRAM used |
-|---------|---------------|-------------------|---------- |
-| marker  | 0.18          | 43.42             |  3.17GB   |
-
-The projected throughput is 122 pages per second on an H100 - we can run 22 individual processes given the VRAM used.
+With the shared inference server, throughput scales with server capacity rather than per-process VRAM: workers hold only small CPU models, and the parent budgets VLM concurrency across them automatically.  Clean digital pages in fast mode convert in well under a second per page on CPU alone.  Run `python benchmarks/throughput/main.py` to measure on your hardware.
 
 ## Table Conversion
 
@@ -538,7 +537,7 @@ poetry install
 Download the benchmark data [here](https://drive.google.com/file/d/1ZSeWDo2g1y0BRLT7KnbmytV2bjWARWba/view?usp=sharing) and unzip. Then run the overall benchmark like this:
 
 ```shell
-python benchmarks/overall.py --methods marker --scores heuristic,llm
+python benchmarks/overall/overall.py --methods marker --scores heuristic,llm
 ```
 
 Options:
@@ -562,15 +561,17 @@ Options:
 
 # How it works
 
-Marker is a pipeline of deep learning models:
+Marker is a pipeline built around the [surya](https://github.com/datalab-to/surya) VLM, served by a local inference server, plus small CPU models:
 
-- Extract text, OCR if necessary (heuristics, [surya](https://github.com/VikParuchuri/surya))
-- Detect page layout and find reading order ([surya](https://github.com/VikParuchuri/surya))
-- Clean and format each block (heuristics, [texify](https://github.com/VikParuchuri/texify), [surya](https://github.com/VikParuchuri/surya))
-- Optionally use an LLM to improve quality
+- Extract embedded text with pdftext, in the PDF's reading order
+- Detect page layout (a lightweight rf-detr detector in fast mode, the VLM in balanced mode)
+- Decide per page whether the embedded text is usable; garbled or scanned pages are OCR'd by the VLM (full-page in balanced, surgically per-block in fast)
+- Equations and inline math are recognized by the VLM (pdftext cannot represent math)
+- Tables are reconstructed from the text layer with CPU heuristics; low-confidence reconstructions fall back to the VLM
+- Optionally use an LLM to improve quality further
 - Combine blocks and postprocess complete text
 
-It only uses models where necessary, which improves speed and accuracy.
+It only calls the VLM where necessary, which improves speed while keeping accuracy.
 
 # Limitations
 

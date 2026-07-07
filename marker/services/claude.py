@@ -17,7 +17,7 @@ logger = get_logger()
 class ClaudeService(BaseService):
     claude_model_name: Annotated[
         str, "The name of the Anthropic model to use for the service."
-    ] = "claude-sonnet-4-6"
+    ] = "claude-opus-4-8"
     claude_api_key: Annotated[str, "The Claude API key to use for the service."] = None
     max_claude_tokens: Annotated[
         int, "The maximum number of tokens to use for a single Claude request."
