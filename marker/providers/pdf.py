@@ -79,6 +79,7 @@ class PdfProvider(BaseProvider):
     keep_chars: Annotated[
         bool,
         "Whether to keep character-level information in the output.",
+        "Only affects pdftext pages - OCR'd pages have no character data.",
     ] = False
     cache_pdftext_pages: Annotated[
         bool,

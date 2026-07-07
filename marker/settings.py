@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # General models
     TORCH_DEVICE: Optional[str] = (
-        None  # Note: MPS device does not work for text detection, and will default to CPU
+        None  # Device for the local torch models (ocr error, fast layout); the VLM runs on the inference server
     )
 
     @computed_field

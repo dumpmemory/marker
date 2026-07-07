@@ -36,6 +36,14 @@ class MarginaliaProcessor(BaseProcessor):
         "one or two small lines.",
     ] = 0.035
     max_chars: Annotated[int, "Maximum text length for a marginalia block."] = 150
+    # Mirror the renderer flags: a user who asked to keep headers/footers in
+    # the output shouldn't have positionally-detected ones suppressed here.
+    keep_pageheader_in_output: Annotated[
+        bool, "Keep page headers in the final output."
+    ] = False
+    keep_pagefooter_in_output: Annotated[
+        bool, "Keep page footers in the final output."
+    ] = False
 
     def __call__(self, document: Document):
         for page in document.pages:
@@ -84,7 +92,15 @@ class MarginaliaProcessor(BaseProcessor):
                 if not text or len(text) > self.max_chars:
                     continue
 
-                is_header = y1 <= self.header_zone and y1 <= body_top
-                is_footer = y0 >= 1 - self.footer_zone and y0 >= body_bottom
+                is_header = (
+                    y1 <= self.header_zone
+                    and y1 <= body_top
+                    and not self.keep_pageheader_in_output
+                )
+                is_footer = (
+                    y0 >= 1 - self.footer_zone
+                    and y0 >= body_bottom
+                    and not self.keep_pagefooter_in_output
+                )
                 if is_header or is_footer:
                     block.ignore_for_output = True

@@ -96,6 +96,13 @@ page_range = st.sidebar.text_input(
 output_format = st.sidebar.selectbox(
     "Output format", ["markdown", "json", "html", "chunks"], index=0
 )
+mode = st.sidebar.selectbox(
+    "Mode",
+    ["balanced", "fast"],
+    index=0,
+    help="'balanced' uses the VLM layout model + full-page OCR (best on GPU). "
+    "'fast' uses lightweight CPU detectors and only OCRs garbled/empty content.",
+)
 run_marker = st.sidebar.button("Run Marker")
 
 use_llm = st.sidebar.checkbox(
@@ -127,6 +134,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             "output_dir": settings.DEBUG_DATA_FOLDER if debug else None,
             "use_llm": use_llm,
             "strip_existing_ocr": strip_existing_ocr,
+            "mode": mode,
         }
     )
     config_parser = ConfigParser(cli_options)

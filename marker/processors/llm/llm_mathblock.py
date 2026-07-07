@@ -17,6 +17,9 @@ class LLMMathBlockProcessor(BaseLLMComplexBlockProcessor):
     redo_inline_math: Annotated[
         bool,
         "If True, the inline math will be re-done, otherwise it will be left as is.",
+        "Requires use_llm. Balanced mode already OCRs inline math natively",
+        "(see EquationProcessor.ocr_inline_math); this is mainly useful with",
+        "fast mode or a different LLM.",
     ] = False
     inlinemath_min_ratio: Annotated[
         float,

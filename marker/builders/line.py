@@ -39,7 +39,8 @@ class LineBuilder(BaseBuilder):
     ] = 0.25
     provider_line_provider_line_min_overlap_pct: Annotated[
         float,
-        "The percentage of a provider line that has to be covered by a detected line",
+        "The overlap fraction above which two provider lines are considered",
+        "duplicates of each other (used to detect duplicated OCR text layers).",
     ] = 0.1
     overlap_line_fraction_threshold: Annotated[
         float,
@@ -68,7 +69,11 @@ class LineBuilder(BaseBuilder):
         bool,
         "Disable OCR for the document. This will only use the lines from the provider.",
     ] = False
-    keep_chars: Annotated[bool, "Keep individual characters."] = False
+    keep_chars: Annotated[
+        bool,
+        "Keep individual characters. Only affects pdftext pages - OCR'd pages",
+        "carry block-level HTML with no character data.",
+    ] = False
     use_pdftext_reading_order: Annotated[
         bool,
         "Order layout blocks on pdftext pages by the PDF's character reading",

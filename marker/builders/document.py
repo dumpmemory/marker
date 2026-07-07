@@ -18,7 +18,7 @@ class DocumentBuilder(BaseBuilder):
 
     lowres_image_dpi: Annotated[
         int,
-        "DPI setting for low-resolution page images used for Layout and Line Detection.",
+        "DPI setting for low-resolution page images used for layout detection.",
     ] = 96
     highres_image_dpi: Annotated[
         int,

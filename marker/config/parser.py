@@ -52,7 +52,7 @@ class ConfigParser:
             "--disable_multiprocessing",
             is_flag=True,
             default=False,
-            help="Disable multiprocessing.",
+            help="Run pdftext extraction single-process (sets pdftext_workers=1).",
         )(fn)
         fn = click.option(
             "--disable_image_extraction",
