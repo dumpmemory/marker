@@ -2,6 +2,10 @@ name: Test CLI scripts
 
 on: [push]
 
+env:
+  # T4 (Turing) lacks bf16 - vllm refuses to start with the default dtype
+  VLLM_DTYPE: float16
+
 jobs:
   tests:
     runs-on: t4_gpu

@@ -31,7 +31,11 @@ def create_model_dict(
     return {
         "inference_manager": manager,
         "layout_model": LayoutPredictor(manager),
-        "fast_layout_model": FastLayoutPredictor(),
+        # The reading-order head defaults off and loads lazily: pdftext pages
+        # are reordered from the PDF's character order (LineBuilder), so the
+        # LayoutBuilder requests learned order per call, only for the pages
+        # that need it (textless/scanned pages).
+        "fast_layout_model": FastLayoutPredictor(use_order=False),
         "recognition_model": RecognitionPredictor(manager),
         "ocr_error_model": OCRErrorPredictor(
             device=device,

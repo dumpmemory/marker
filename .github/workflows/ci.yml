@@ -22,4 +22,6 @@ jobs:
       - name: Run tests
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # T4 (Turing) lacks bf16 - vllm refuses to start with the default dtype
+          VLLM_DTYPE: float16
         run: poetry run pytest

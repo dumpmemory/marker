@@ -77,9 +77,11 @@ class LineBuilder(BaseBuilder):
     use_pdftext_reading_order: Annotated[
         bool,
         "Order layout blocks on pdftext pages by the PDF's character reading",
-        "order. On by default: it beats surya's learned reading-order head on",
-        "multi-column pages (olmocr-bench order tests: 75% vs 56%). The learned",
-        "head is still used on OCR pages, which have no pdftext positions.",
+        "order. On by default: it beats learned reading-order models on",
+        "multi-column pages (olmocr-bench order tests: 75% vs 56%). OCR'd",
+        "pages get their order from full-page OCR instead. Turning this off",
+        "orders every page by the layout model (in fast mode this enables its",
+        "learned reading-order head for all pages).",
     ] = True
     mode: Annotated[
         str,
@@ -146,18 +148,17 @@ class LineBuilder(BaseBuilder):
         """Order layout blocks on pdftext pages by the PDF's character reading
         order, instead of the layout model's position.
 
-        Surya's layout carries a learned AR reading-order head (it cross-attends
-        to the detector's feature map and works on OCR pages too), which marker
-        defers to in the general case. But that head is trained at a fixed small
-        resolution with a box-count cap, so it degrades on very large multi-column
-        pages (newspapers, broadsheets). There, the PDF's own character stream is
-        the more reliable signal - so for large clean-digital pages we order
-        blocks by ``span.minimum_position`` (pdftext char start index =
-        column-aware reading order) instead.
+        The PDF's own character stream is the most reliable reading-order
+        signal (it beat surya's learned order head on multi-column pages), so
+        every pdftext page is ordered by ``span.minimum_position`` (pdftext
+        char start index = column-aware reading order). Because of this, the
+        fast layout model skips its reading-order head on pages with a text
+        layer (see ``LayoutBuilder.surya_layout``) - those boxes arrive
+        raster-sorted and are reordered here.
 
-        Text-less blocks (figures, empty boxes) keep their placement relative to
-        the text block they followed. OCR'd ("surya") pages are left untouched
-        (no pdftext positions - they rely on the learned order head).
+        Text-less blocks (figures, empty boxes) keep their placement relative
+        to the text block they followed. OCR'd ("surya") pages are left
+        untouched - full-page OCR rebuilds their structure in reading order.
         """
         if not self.use_pdftext_reading_order:
             return

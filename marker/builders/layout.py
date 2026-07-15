@@ -43,6 +43,13 @@ class LayoutBuilder(BaseBuilder):
         "Mirrors the OcrBuilder setting - layout can only be skipped when",
         "full-page OCR is in use.",
     ] = True
+    use_pdftext_reading_order: Annotated[
+        bool,
+        "Mirrors the LineBuilder setting. When True (default), fast mode only",
+        "runs the learned reading-order head on textless (scanned) pages -",
+        "pdftext pages are reordered from the PDF character stream instead.",
+        "When False, the head runs on every page in fast mode.",
+    ] = True
     disable_tqdm: Annotated[
         bool,
         "Disable tqdm progress bars.",
@@ -87,7 +94,7 @@ class LayoutBuilder(BaseBuilder):
                 for page in document.pages
             ]
         else:
-            layout_results = self.surya_layout(document.pages)
+            layout_results = self.surya_layout(document.pages, provider)
         self.add_blocks_to_pages(document.pages, layout_results)
         self.expand_layout_blocks(document)
 
@@ -110,11 +117,41 @@ class LayoutBuilder(BaseBuilder):
             )
         return layout_results
 
-    def surya_layout(self, pages: List[PageGroup]) -> List[LayoutResult]:
+    def surya_layout(
+        self, pages: List[PageGroup], provider: PdfProvider
+    ) -> List[LayoutResult]:
         model = self.get_layout_model()
         model.disable_tqdm = self.disable_tqdm
-        layout_results = model([p.get_image(highres=False) for p in pages])
-        return layout_results
+        images = [p.get_image(highres=False) for p in pages]
+        if self.mode != "fast":
+            return model(images)
+
+        # Fast mode skips the layout reading-order head wherever pdftext can
+        # order the page instead (LineBuilder reorders from the PDF character
+        # stream). The head still runs where no pdftext order exists: textless
+        # (scanned) pages, whose layout order seeds block-mode OCR and the
+        # per-page fallback when full-page OCR fails - and every page when
+        # pdftext ordering is turned off.
+        if not self.use_pdftext_reading_order:
+            return model(images, use_order=True)
+
+        need_order, raster = [], []
+        for i, page in enumerate(pages):
+            if provider.page_lines.get(page.page_id):
+                raster.append(i)
+            else:
+                need_order.append(i)
+
+        results: List[LayoutResult] = [None] * len(pages)
+        for idx, result in zip(
+            raster, model([images[i] for i in raster], use_order=False)
+        ):
+            results[idx] = result
+        for idx, result in zip(
+            need_order, model([images[i] for i in need_order], use_order=True)
+        ):
+            results[idx] = result
+        return results
 
     def expand_layout_blocks(self, document: Document):
         for page in document.pages:

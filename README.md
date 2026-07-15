@@ -43,23 +43,15 @@ Commercial self-hosting requires a license — see [Commercial usage](#commercia
 
 ## Performance
 
-<img src="data/images/overall.png" width="800px"/>
+<img src="data/images/olmocr_bench.png" width="800px"/>
 
-Marker benchmarks favorably compared to cloud services like Llamaparse and Mathpix, as well as other open source tools.
+We measure marker on [olmocr-bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench), a third-party benchmark of 1,403 PDFs with ~7,000 unit tests covering math, tables, multi-column layout, scans, and hard edge cases.  Balanced mode scores **77.5%** overall — **81.6%** on digital PDFs — while fast mode handles clean digital documents on CPU alone at a fraction of the cost.
 
-The above results are running single PDF pages serially.  Marker is significantly faster when running in batch mode, since the inference server batches requests across workers.  (These benchmark numbers predate the current VLM-based release - refreshed numbers are coming.)
-
-See [below](#benchmarks) for detailed speed and accuracy benchmarks, and instructions on how to run your own benchmarks.
+See [below](#benchmarks) for the full per-category scores and instructions on how to run your own benchmarks.
 
 ## Hybrid Mode
 
 For the highest accuracy, pass the `--use_llm` flag to use an LLM alongside marker.  This will do things like merge tables across pages, handle inline math, format tables properly, and extract values from forms.  It works with Gemini, Claude, OpenAI-compatible, Azure, Vertex, or Ollama models.  By default, it uses `gemini-3.5-flash`.  See [below](#llm-services) for details.
-
-Here is a table benchmark comparing marker, gemini flash alone, and marker with use_llm:
-
-<img src="data/images/table.png" width="400px"/>
-
-As you can see, the use_llm mode offers higher accuracy than marker or gemini alone.
 
 ## Examples
 
@@ -112,6 +104,7 @@ First, some configuration:
 I've included a streamlit app that lets you interactively try marker with some basic options.  Run it with:
 
 ```shell
+pip install -U streamlit streamlit-ace
 marker_gui
 ```
 
@@ -476,65 +469,46 @@ Pass the `debug` option to activate debug mode.  This will save images of each p
 
 ## Overall PDF Conversion
 
-We created a [benchmark set](https://huggingface.co/datasets/datalab-to/marker_benchmark) by extracting single PDF pages from common crawl.  We scored based on a heuristic that aligns text with ground truth text segments, and an LLM as a judge scoring method.
+We measure conversion quality with [olmocr-bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench): 1,403 PDFs with ~7,000 pass/fail unit tests covering math rendering, table structure, reading order, headers/footers, and old scans.  Scores below are the fraction of unit tests passed, using the official olmocr-bench checker:
 
-| Method     | Avg Time | Heuristic Score | LLM Score |
-|------------|----------|-----------------|-----------|
-| marker     | 2.83837  | 95.6709         | 4.23916   |
-| llamaparse | 23.348   | 84.2442         | 3.97619   |
-| mathpix    | 6.36223  | 86.4281         | 4.15626   |
-| docling    | 3.69949  | 86.7073         | 3.70429   |
+| Category | balanced | fast | disable_ocr |
+|----------------------|----------|------|-------------|
+| arXiv math           | 84.7     | 23.4 | 0.0         |
+| Tables               | 71.1     | 67.3 | 48.1        |
+| Multi column         | 75.8     | 75.2 | 68.9        |
+| Headers & footers    | 95.7     | 92.9 | 95.3        |
+| Long tiny text       | 69.0     | 66.3 | 68.3        |
+| Old scans math       | 67.0     | 68.1 | 0.0         |
+| Old scans            | 42.6     | 42.6 | 15.0        |
+| **Overall**          | **77.5** | **50.8** | **32.3** |
+| **Overall (digital PDFs only)** | **81.6** | **48.4** | **32.3** |
 
-Benchmarks were run on an H100 for markjer and docling - llamaparse and mathpix used their cloud services.  We can also look at it by document type:
+Notes:
 
-<img src="data/images/per_doc.png" width="1000px"/>
-
-| Document Type        | Marker heuristic | Marker LLM | Llamaparse Heuristic | Llamaparse LLM | Mathpix Heuristic | Mathpix LLM | Docling Heuristic | Docling LLM |
-|----------------------|------------------|------------|----------------------|----------------|-------------------|-------------|-------------------|-------------|
-| Scientific paper     | 96.6737          | 4.34899    | 87.1651              | 3.96421        | 91.2267           | 4.46861     | 92.135            | 3.72422     |
-| Book page            | 97.1846          | 4.16168    | 90.9532              | 4.07186        | 93.8886           | 4.35329     | 90.0556           | 3.64671     |
-| Other                | 95.1632          | 4.25076    | 81.1385              | 4.01835        | 79.6231           | 4.00306     | 83.8223           | 3.76147     |
-| Form                 | 88.0147          | 3.84663    | 66.3081              | 3.68712        | 64.7512           | 3.33129     | 68.3857           | 3.40491     |
-| Presentation         | 95.1562          | 4.13669    | 81.2261              | 4              | 83.6737           | 3.95683     | 84.8405           | 3.86331     |
-| Financial document   | 95.3697          | 4.39106    | 82.5812              | 4.16111        | 81.3115           | 4.05556     | 86.3882           | 3.8         |
-| Letter               | 98.4021          | 4.5        | 93.4477              | 4.28125        | 96.0383           | 4.45312     | 92.0952           | 4.09375     |
-| Engineering document | 93.9244          | 4.04412    | 77.4854              | 3.72059        | 80.3319           | 3.88235     | 79.6807           | 3.42647     |
-| Legal document       | 96.689           | 4.27759    | 86.9769              | 3.87584        | 91.601            | 4.20805     | 87.8383           | 3.65552     |
-| Newspaper page       | 98.8733          | 4.25806    | 84.7492              | 3.90323        | 96.9963           | 4.45161     | 92.6496           | 3.51613     |
-| Magazine page        | 98.2145          | 4.38776    | 87.2902              | 3.97959        | 93.5934           | 4.16327     | 93.0892           | 4.02041     |
+- The digital-only split removes scanned PDFs and PDFs with a fake (previously OCR'd) text layer — 1,186 of the 1,403 PDFs.  Overall scores are test-weighted, and arXiv math makes up over half of the digital split's tests — that weighting is why fast mode's digital overall dips below its full-bench overall (and why `disable_ocr` barely moves) even though their non-math categories hold steady or improve on the digital split.
+- `--disable_ocr` never calls the VLM.  Math scores zero because equations have no text-layer representation - the other rows show what the pure text-layer pipeline extracts on CPU.
+- Fast mode's math score is low by design: it only block-OCRs equation blocks, not inline math inside text.  Use balanced mode for math-heavy documents.
 
 ## Throughput
 
-We benchmarked throughput using a [single long PDF](https://www.greenteapress.com/thinkpython/thinkpython.pdf).
-
-With the shared inference server, throughput scales with server capacity rather than per-process VRAM: workers hold only small CPU models, and the parent budgets VLM concurrency across them automatically.  Clean digital pages in fast mode convert in well under a second per page on CPU alone.  Run `python benchmarks/throughput/main.py` to measure on your hardware.
+With the shared inference server, throughput scales with server capacity rather than per-process VRAM: workers hold only small CPU models, and the parent budgets VLM concurrency across them automatically.  Clean digital pages in fast mode convert in well under a second per page on CPU alone.  Run `python benchmarks/throughput/main.py` to measure on your hardware ([sample long PDF](https://www.greenteapress.com/thinkpython/thinkpython.pdf)).
 
 ## Table Conversion
 
-Marker can extract tables from PDFs using `marker.converters.table.TableConverter`. The table extraction performance is measured by comparing the extracted HTML representation of tables against the original HTML representations using the test split of [FinTabNet](https://developer.ibm.com/exchanges/data/all/fintabnet/). The HTML representations are compared using a tree edit distance based metric to judge both structure and content. Marker detects and identifies the structure of all tables in a PDF page and achieves these scores:
-
-| Method           | Avg score | Total tables |
-|------------------|-----------|--------------|
-| marker           | 0.816     | 99           |
-| marker w/use_llm | 0.907     | 99           |
-| gemini           | 0.829     | 99           |
-
-The `--use_llm` flag can significantly improve table recognition performance, as you can see.
-
-We filter out tables that we cannot align with the ground truth, since fintabnet and our layout model have slightly different detection methods (this results in some tables being split/merged).
+Marker can extract tables from PDFs using `marker.converters.table.TableConverter`.  Table quality is included in the olmocr-bench scores above (the `Tables` row).  Digital tables are reconstructed from the PDF text layer on CPU; scanned tables and low-confidence reconstructions fall back to the VLM.  The `--use_llm` flag can improve difficult tables further (multi-page merges, complex spans).
 
 ## Running your own benchmarks
 
-You can benchmark the performance of marker on your machine. Install marker manually with:
+To reproduce the olmocr-bench scores, convert the bench PDFs with marker (markdown output), then score the results with the [olmocr-bench harness](https://github.com/allenai/olmocr/tree/main/olmocr/bench) - it downloads the bench data and runs the unit tests against your outputs.
+
+The repo also ships marker's own benchmark suite.  Install marker manually first:
 
 ```shell
-git clone https://github.com/VikParuchuri/marker.git
+git clone https://github.com/datalab-to/marker.git
 poetry install
 ```
 
-### Overall PDF Conversion
-
-Download the benchmark data [here](https://drive.google.com/file/d/1ZSeWDo2g1y0BRLT7KnbmytV2bjWARWba/view?usp=sharing) and unzip. Then run the overall benchmark like this:
+Download the benchmark data [here](https://drive.google.com/file/d/1ZSeWDo2g1y0BRLT7KnbmytV2bjWARWba/view?usp=sharing) and unzip, then run:
 
 ```shell
 python benchmarks/overall/overall.py --methods marker --scores heuristic,llm
@@ -547,8 +521,7 @@ Options:
 - `--methods` can be `llamaparse`, `mathpix`, `docling`, `marker`.  Comma separated.
 - `--scores` which scoring functions to use, can be `llm`, `heuristic`.  Comma separated.
 
-### Table Conversion
-The processed FinTabNet dataset is hosted [here](https://huggingface.co/datasets/datalab-to/fintabnet-test) and is automatically downloaded. Run the benchmark with:
+There is also a table-focused benchmark against [FinTabNet](https://huggingface.co/datasets/datalab-to/fintabnet-test) (auto-downloaded):
 
 ```shell
 python benchmarks/table/table.py --max_rows 100
@@ -557,7 +530,7 @@ python benchmarks/table/table.py --max_rows 100
 Options:
 
 - `--use_llm` uses an llm with marker to improve accuracy.
-- `--use_gemini` also benchmarks gemini 2.0 flash.
+- `--use_gemini` also benchmarks gemini flash.
 
 # How it works
 
