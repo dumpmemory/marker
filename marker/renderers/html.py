@@ -7,7 +7,7 @@ from typing import Annotated, Tuple
 from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning
 from pydantic import BaseModel
 
-from marker.renderers import BaseRenderer
+from marker.renderers import BaseRenderer, CONTENT_REF_RE
 from marker.schema import BlockTypes
 from marker.schema.blocks import BlockId
 from marker.settings import settings
@@ -19,9 +19,6 @@ warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
 # Suppress DecompressionBombError
 Image.MAX_IMAGE_PIXELS = None
-
-# Placeholder emitted by Block.assemble_html for each child block.
-CONTENT_REF_RE = re.compile(r"<content-ref src='([^']*)'></content-ref>")
 
 
 class HTMLOutput(BaseModel):

@@ -99,7 +99,10 @@ class PageGroup(Group):
 
         structure_idx = 0
         if block is not None:
-            structure_idx = self.structure.index(block.id) + 1
+            pos = self.structure_index(block.id)
+            if pos is None:
+                return None
+            structure_idx = pos + 1
 
         # Iterate over blocks following the given block
         for next_block_id in self.structure[structure_idx:]:
@@ -109,8 +112,8 @@ class PageGroup(Group):
         return None  # No valid next block found
 
     def get_prev_block(self, block: Block):
-        block_idx = self.structure.index(block.id)
-        if block_idx > 0:
+        block_idx = self.structure_index(block.id)
+        if block_idx:
             return self.get_block(self.structure[block_idx - 1])
         return None
 

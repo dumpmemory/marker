@@ -388,12 +388,24 @@ def table_lines_from_pdftext(pdftext_page: dict, bbox) -> list:
     cached pdftext page, restricted to ``bbox`` (x0, y0, x1, y1, in pdftext/PDF
     points). Tokens are word-level (see _line_tokens). Feeds
     reconstruct_table_html."""
+    bx0, by0, bx1, by1 = bbox
     lines = []
     for block in pdftext_page.get("blocks", []):
         for line in block.get("lines", []):
+            lb = line.get("bbox")
+            # Cheap reject: _line_tokens only keeps chars whose center lies in
+            # the table bbox, and every char is contained in the line bbox, so a
+            # line whose bbox is disjoint from the table region can contribute
+            # nothing. Skipping it avoids re-scanning the whole page's char
+            # layer once per table (was O(tables x page_chars)). Lines without a
+            # bbox fall through to the full per-char check.
+            if lb is not None and (
+                lb[2] < bx0 or lb[0] > bx1 or lb[3] < by0 or lb[1] > by1
+            ):
+                continue
             toks = _line_tokens(line, bbox)
             if toks:
-                lb = line.get("bbox") or [0, 0, 0, 0]
+                lb = lb or [0, 0, 0, 0]
                 lines.append((toks, round(lb[1], 1), round(lb[3], 1)))
     return lines
 

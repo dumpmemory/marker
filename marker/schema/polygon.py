@@ -1,5 +1,6 @@
 from __future__ import annotations
 import copy
+from functools import cached_property
 from typing import List
 
 from pydantic import BaseModel, field_validator, computed_field
@@ -78,8 +79,15 @@ class PolygonBox(BaseModel):
         return self.bbox[3]
 
     @computed_field
-    @property
+    @cached_property
     def bbox(self) -> List[float]:
+        # Cached: a PolygonBox's corners are never mutated in place (expand /
+        # rescale / merge / fit_to_bounds all return new instances), so bbox is
+        # immutable for the lifetime of an instance. bbox and the derived
+        # width/height/area/center/x_start... accessors are the hottest
+        # primitives in the pipeline (intersection matrices, line merge,
+        # sorting, marginalia), so memoizing removes a large amount of repeated
+        # min/max work.
         min_x = min([corner[0] for corner in self.polygon])
         min_y = min([corner[1] for corner in self.polygon])
         max_x = max([corner[0] for corner in self.polygon])

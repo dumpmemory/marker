@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Sequence, Tuple
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, PrivateAttr, field_validator
 from PIL import Image
 
 from marker.schema import BlockTypes
@@ -103,8 +103,28 @@ class Block(BaseModel):
     lowres_image: Image.Image | None = None
     highres_image: Image.Image | None = None
     removed: bool = False  # Has block been replaced by new block?
+    _structure_index: Optional[dict] = PrivateAttr(default=None)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def structure_index(self, block_id: BlockId) -> Optional[int]:
+        """O(1) position of ``block_id`` within ``self.structure`` via a
+        self-healing index cache (mirrors ``Document.get_page``). The cached
+        entry is validated on each lookup and the index rebuilt when it no
+        longer matches, so it stays correct across structure mutations while
+        turning the per-block ``get_next_block``/``get_prev_block`` scans (and
+        the O(n^2) loops in ListProcessor/BlockquoteProcessor) into O(1)
+        lookups. Returns None if the id is not in the structure."""
+        structure = self.structure
+        if not structure:
+            return None
+        cache = self._structure_index
+        idx = cache.get(block_id) if cache else None
+        if idx is None or idx >= len(structure) or structure[idx] != block_id:
+            cache = {bid: i for i, bid in enumerate(structure)}
+            self._structure_index = cache
+            idx = cache.get(block_id)
+        return idx
 
     @property
     def id(self) -> BlockId:
@@ -148,8 +168,8 @@ class Block(BaseModel):
         if ignored_block_types is None:
             ignored_block_types = []
 
-        structure_idx = self.structure.index(block.id)
-        if structure_idx == 0:
+        structure_idx = self.structure_index(block.id)
+        if not structure_idx:
             return None
 
         for prev_block_id in reversed(self.structure[:structure_idx]):
@@ -167,7 +187,10 @@ class Block(BaseModel):
 
         structure_idx = 0
         if block is not None:
-            structure_idx = self.structure.index(block.id) + 1
+            pos = self.structure_index(block.id)
+            if pos is None:
+                return None
+            structure_idx = pos + 1
 
         for next_block_id in self.structure[structure_idx:]:
             if next_block_id.block_type not in ignored_block_types:
