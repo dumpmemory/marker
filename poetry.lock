@@ -5682,14 +5682,14 @@ streamlit = ">=0.63"
 
 [[package]]
 name = "surya-ocr"
-version = "0.21.2"
+version = "0.22.0"
 description = "OCR, layout, reading order, and table recognition in 90+ languages."
 optional = false
 python-versions = "<4,>=3.10"
 groups = ["main"]
 files = [
-    {file = "surya_ocr-0.21.2-py3-none-any.whl", hash = "sha256:8bd99aaad0ab81deb3c27b930c0cb07c3339963f7eb34017b6caa7ef4447654f"},
-    {file = "surya_ocr-0.21.2.tar.gz", hash = "sha256:bc6bf28856922ce698c6c9f1c963b1a1175fc8928f97980ab06b37c1b2679279"},
+    {file = "surya_ocr-0.22.0-py3-none-any.whl", hash = "sha256:387b4e4043f7502c86e8a3029636fac934bb5294db317d435e984533e8078e18"},
+    {file = "surya_ocr-0.22.0.tar.gz", hash = "sha256:b25d542e9c54ae873586a58452f57296f91b71378b0872d091efa0945cf6f817"},
 ]
 
 [package.dependencies]
@@ -6852,4 +6852,4 @@ full = ["ebooklib", "mammoth", "openpyxl", "python-pptx", "weasyprint"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "098748db60e596e19e5fe0f82505ea59da838eb99566a5e29437d5dadb074ace"
+content-hash = "402bdf3d7a4a4fdd2b42095d0ccaf07f089414404130a4ebe190dfcf98b5f0ae"
