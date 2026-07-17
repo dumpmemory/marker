@@ -87,12 +87,6 @@ def page_count(pdf_file: UploadedFile):
         return 1
 
 
-def pillow_image_to_base64_string(img: Image) -> str:
-    buffered = io.BytesIO()
-    img.save(buffered, format="JPEG")
-    return base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-
 def extract_root_pydantic_class(schema_code: str) -> Optional[str]:
     try:
         # Parse the code into an AST

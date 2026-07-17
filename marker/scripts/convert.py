@@ -7,6 +7,10 @@ import torch
 
 from marker.utils.batch import get_worker_count
 
+# Let unsupported MPS ops fall back to CPU (Apple Silicon); matches the other
+# entrypoints. Workers/servers spawned here inherit this.
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
 # Ensure threads don't contend
 os.environ["MKL_DYNAMIC"] = "FALSE"
 os.environ["OMP_DYNAMIC"] = "FALSE"
@@ -71,6 +75,12 @@ def process_single_pdf(args):
     converter_cls = config_parser.get_converter_cls()
     config_dict = config_parser.generate_config_dict()
     config_dict["disable_tqdm"] = True
+    # This is a worker process in a multiprocessing pool. pdftext runs a
+    # ProcessPoolExecutor of its own when workers > 1 (pypdfium2 is not
+    # thread-safe, so it forks per-page work); nesting that inside our worker
+    # pool deadlocks. Force in-process pdftext (workers<=1) so each worker holds
+    # exactly one pdftext instance. Throughput comes from the pool's breadth.
+    config_dict["pdftext_workers"] = 1
 
     try:
         if cli_options.get("debug_print"):

@@ -28,6 +28,11 @@ class LayoutBuilder(BaseBuilder):
         "Conversion mode: 'balanced' (default, GPU) uses the VLM layout model;",
         "'fast' (CPU) uses the lightweight rf-detr/onnx layout detector.",
     ] = "balanced"
+    disable_ocr: Annotated[
+        bool,
+        "Pure text-layer path (no VLM). Forces the lightweight rf-detr layout",
+        "detector so the whole pipeline runs on CPU without an inference server.",
+    ] = False
     force_layout_block: Annotated[
         str,
         "Skip layout and force every page to be treated as a specific block type.",
@@ -78,8 +83,13 @@ class LayoutBuilder(BaseBuilder):
 
         super().__init__(config)
 
+    def use_fast_layout(self):
+        # Fast mode and disable_ocr (pure text-layer, no VLM) both use the
+        # lightweight rf-detr layout detector so no VLM server is required.
+        return self.mode == "fast" or self.disable_ocr
+
     def get_layout_model(self):
-        return self.fast_layout_model if self.mode == "fast" else self.layout_model
+        return self.fast_layout_model if self.use_fast_layout() else self.layout_model
 
     def __call__(self, document: Document, provider: PdfProvider):
         if self.force_layout_block is not None:
@@ -123,7 +133,7 @@ class LayoutBuilder(BaseBuilder):
         model = self.get_layout_model()
         model.disable_tqdm = self.disable_tqdm
         images = [p.get_image(highres=False) for p in pages]
-        if self.mode != "fast":
+        if not self.use_fast_layout():
             return model(images)
 
         # Fast mode skips the layout reading-order head wherever pdftext can

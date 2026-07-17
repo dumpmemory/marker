@@ -190,22 +190,27 @@ class LineBuilder(BaseBuilder):
         return 4
 
     def get_all_lines(self, document: Document, provider: PdfProvider):
-        ocr_error_detection_results = self.ocr_error_detection(
-            document.pages, provider.page_lines
-        )
+        # disable_ocr keeps the PDF text layer regardless, so skip the
+        # ocr-error model entirely (no server needed on the pure-CPU path).
+        if self.disable_ocr:
+            labels = ["good"] * len(document.pages)
+            scores = [0.0] * len(document.pages)
+        else:
+            ocr_error_detection_results = self.ocr_error_detection(
+                document.pages, provider.page_lines
+            )
+            labels = ocr_error_detection_results.labels
+            # page-level P(bad); used to gate the per-block recheck.
+            scores = ocr_error_detection_results.scores or [
+                1.0 if lbl == "bad" else 0.0 for lbl in labels
+            ]
 
         page_lines = {page.page_id: [] for page in document.pages}
-        # page_id -> page-level P(bad); used to gate the per-block recheck.
-        scores = ocr_error_detection_results.scores or [
-            1.0 if lbl == "bad" else 0.0 for lbl in ocr_error_detection_results.labels
-        ]
         self.page_ocr_error_scores = {
             page.page_id: score for page, score in zip(document.pages, scores)
         }
 
-        for document_page, ocr_error_detection_label in zip(
-            document.pages, ocr_error_detection_results.labels
-        ):
+        for document_page, ocr_error_detection_label in zip(document.pages, labels):
             document_page.ocr_errors_detected = ocr_error_detection_label == "bad"
             provider_lines: List[ProviderOutput] = provider.page_lines.get(
                 document_page.page_id, []

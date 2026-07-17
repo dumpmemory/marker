@@ -6,7 +6,7 @@
   <strong>State of the Art models for Document Intelligence</strong>
 </p>
 <p align="center">
-  <a href="https://www.gnu.org/licenses/gpl-3.0.html"><img src="https://img.shields.io/badge/Code%20License-GPL--3.0-green.svg" alt="Code License"></a>
+  <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/Code%20License-Apache%202.0-green.svg" alt="Code License"></a>
   <a href="https://www.datalab.to/pricing"><img src="https://img.shields.io/badge/Model%20License-OpenRAIL--M-blue.svg" alt="Model License"></a>
   <a href="https://discord.gg/KuZwXNGnfH"><img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
 </p>
@@ -39,19 +39,21 @@ If you have high volume workloads, we offer a batch processing service that has 
 
 Get started with **$5 in free credits** — [sign up](https://www.datalab.to/?utm_source=gh-marker) — takes under 30 seconds — or try our [public playground](https://www.datalab.to/playground?utm_source=gh-marker).
 
-Commercial self-hosting requires a license — see [Commercial usage](#commercial-usage). For on-prem licensing, [contact us](https://www.datalab.to/contact?utm_source=gh-marker-onprem).
+The code is Apache 2.0; the model weights are free for research, personal use, and smaller companies, and require a license for larger commercial use — see [Commercial usage](#commercial-usage). For on-prem licensing, [contact us](https://www.datalab.to/contact?utm_source=gh-marker-onprem).
 
 ## Performance
 
 <img src="data/images/olmocr_bench.png" width="800px"/>
 
-We measure marker on [olmocr-bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench), a third-party benchmark of 1,403 PDFs with ~7,000 unit tests covering math, tables, multi-column layout, scans, and hard edge cases.  Balanced mode scores **77.5%** overall — **81.6%** on digital PDFs — while fast mode handles clean digital documents on CPU alone at a fraction of the cost.
+We measure marker on [olmocr-bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench), a third-party benchmark of 1,403 PDFs with ~8,400 unit tests covering math, tables, multi-column layout, scans, and hard edge cases.  Balanced mode scores **76.0%** overall — **83.5%** on born-digital PDFs — ahead of MinerU and docling and within range of much larger VLMs, while fast mode runs the layout + text-layer path far cheaper (and a no-OCR mode goes faster still).  Scores are the olmocr-bench overall (macro-average across the 8 categories).
 
-See [below](#benchmarks) for the full per-category scores and instructions on how to run your own benchmarks.
+<img src="data/images/olmocr_digital.png" width="700px"/>
+
+See [below](#benchmarks) for the full per-category scores, the competitive comparison, and instructions on how to run your own benchmarks.
 
 ## Hybrid Mode
 
-For the highest accuracy, pass the `--use_llm` flag to use an LLM alongside marker.  This will do things like merge tables across pages, handle inline math, format tables properly, and extract values from forms.  It works with Gemini, Claude, OpenAI-compatible, Azure, Vertex, or Ollama models.  By default, it uses `gemini-3.5-flash`.  See [below](#llm-services) for details.
+For the highest accuracy, pass the `--use_llm` flag to use an LLM alongside marker.  This will do things like merge tables across pages, handle inline math, format tables properly, and extract values from forms.  It works with Gemini, Claude, OpenAI-compatible, Azure, Vertex, OpenRouter, or Ollama models.  By default, it uses `gemini-3.5-flash`.  See [below](#llm-services) for details.
 
 ## Examples
 
@@ -63,7 +65,7 @@ For the highest accuracy, pass the `--use_llm` flag to use an LLM alongside mark
 
 # Commercial usage
 
-Our model weights use a modified AI Pubs Open Rail-M license (free for research, personal use, and startups under $2M funding/revenue) and our code is GPL. For broader commercial licensing or to remove GPL requirements, visit our pricing page [here](https://www.datalab.to/pricing?utm_source=gh-marker).
+Our code is licensed under **Apache 2.0** — free to use, including commercially. Our model weights use a modified AI Pubs Open Rail-M license (free for research, personal use, and startups under $2M funding/revenue). For commercial use of the model weights beyond that, visit our pricing page [here](https://www.datalab.to/pricing?utm_source=gh-marker).
 
 # Community
 
@@ -131,6 +133,7 @@ Options:
 - `--strip_existing_ocr`: Remove all existing OCR text in the document and re-OCR with surya.
 - `--redo_inline_math`: If you want the absolute highest quality inline math conversion, use this along with `--use_llm`.
 - `--disable_image_extraction`: Don't extract images from the PDF.  If you also specify `--use_llm`, then images will be replaced with a description.
+- `--keep_pageheader_in_output` / `--keep_pagefooter_in_output`: Keep running page headers / footers in the output instead of stripping them (they are removed by default).
 - `--debug`: Enable debug mode for additional logging and diagnostic information.
 - `--processors TEXT`: Override the default processors by providing their full module paths, separated by commas. Example: `--processors "module1.processor1,module2.processor2"`
 - `--config_json PATH`: Path to a JSON configuration file containing additional settings.
@@ -151,6 +154,7 @@ marker /path/to/input/folder
 - `--workers` is the number of conversion workers to run simultaneously.  This is automatically set by default, but you can increase it to increase throughput, at the cost of more CPU usage.  All workers share a single inference server, which the parent process spawns.
 - The parent budgets total VLM concurrency automatically: it reads the server's capacity and splits it across workers (aggregate in-flight ≈ 1.5× capacity), so adding workers never over-queues the server.  Set `SURYA_INFERENCE_PARALLEL` yourself only to override.
 - With `--disable_ocr` no inference server is started at all, and the pool is sized purely by CPU cores.
+- `--skip_existing` skips input files that already have output in `--output_dir` (resume a run); `--max_files N` caps how many files are converted; `--disable_multiprocessing` runs everything in one process.
 
 ### Batch sizing cheat sheet (e.g. 1000 docs)
 
@@ -407,6 +411,7 @@ When running with the `--use_llm` flag, you have a choice of services you can us
 - `Claude` - this will use the anthropic API.  You can configure `--claude_api_key`, and `--claude_model_name`.  To use it, set `--llm_service=marker.services.claude.ClaudeService`.
 - `OpenAI` - this supports any openai-like endpoint. You can configure `--openai_api_key`, `--openai_model`, and `--openai_base_url`. To use it, set `--llm_service=marker.services.openai.OpenAIService`.
 - `Azure OpenAI` - this uses the Azure OpenAI service. You can configure `--azure_endpoint`, `--azure_api_key`, and `--deployment_name`. To use it, set `--llm_service=marker.services.azure_openai.AzureOpenAIService`.
+- `OpenRouter` - this uses [OpenRouter](https://openrouter.ai)'s OpenAI-compatible API.  You can configure `--openrouter_api_key` (or the `OPENROUTER_API_KEY` env var), `--openrouter_model` (default `google/gemini-3.5-flash`), and `--openrouter_base_url`.  To use it, set `--llm_service=marker.services.openrouter.OpenRouterService`.
 
 These services may have additional optional configuration as well - you can see it by viewing the classes.
 
@@ -434,7 +439,7 @@ pip install -U uvicorn fastapi python-multipart
 marker_server --port 8001
 ```
 
-This will start a fastapi server that you can access at `localhost:8001`.  You can go to `localhost:8001/docs` to see the endpoint options.
+This will start a fastapi server that you can access at `localhost:8001` (use `--host` to change the bind address).  You can go to `localhost:8001/docs` to see the endpoint options.
 
 You can send requests like this:
 
@@ -444,11 +449,13 @@ import json
 
 post_data = {
     'filepath': 'FILEPATH',
-    # Add other params here
+    # Accepted params: page_range, mode, force_ocr, paginate_output, output_format
 }
 
 requests.post("http://localhost:8001/marker", data=json.dumps(post_data)).json()
 ```
+
+The server accepts only the params listed above (`page_range`, `mode`, `force_ocr`, `paginate_output`, `output_format`).  The `--use_llm` hybrid path and `--disable_ocr` are not exposed over the API — use the CLI or the Python API for those, or the hosted [Datalab API](https://www.datalab.to/plans).
 
 Note that this is not a very robust API, and is only intended for small-scale use.  If you want to use this server, but want a more robust conversion option, you can use the hosted [Datalab API](https://www.datalab.to/plans).
 
@@ -469,29 +476,80 @@ Pass the `debug` option to activate debug mode.  This will save images of each p
 
 ## Overall PDF Conversion
 
-We measure conversion quality with [olmocr-bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench): 1,403 PDFs with ~7,000 pass/fail unit tests covering math rendering, table structure, reading order, headers/footers, and old scans.  Scores below are the fraction of unit tests passed, using the official olmocr-bench checker:
+We measure conversion quality with [olmocr-bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench): 1,403 PDFs with ~8,400 pass/fail unit tests covering math rendering, table structure, reading order, headers/footers, and old scans.  The overall score is the **macro-average across the 8 categories** (matching how olmocr-bench and Chandra report), using the official olmocr-bench checker.
 
-| Category | balanced | fast | disable_ocr |
-|----------------------|----------|------|-------------|
-| arXiv math           | 84.7     | 23.4 | 0.0         |
-| Tables               | 71.1     | 67.3 | 48.1        |
-| Multi column         | 75.8     | 75.2 | 68.9        |
-| Headers & footers    | 95.7     | 92.9 | 95.3        |
-| Long tiny text       | 69.0     | 66.3 | 68.3        |
-| Old scans math       | 67.0     | 68.1 | 0.0         |
-| Old scans            | 42.6     | 42.6 | 15.0        |
-| **Overall**          | **77.5** | **50.8** | **32.3** |
-| **Overall (digital PDFs only)** | **81.6** | **48.4** | **32.3** |
+### Competitive comparison
+
+Quality vs. throughput on the full bench — up (higher score) and right (faster) is better.  Marker (this repo) beats **both** MinerU and docling on score *and* throughput at once: balanced matches Gemini/MinerU quality while running ~10× more pages/sec than MinerU, and fast trades a little quality for a big speedup.
+
+<img src="data/images/olmocr_bench.png" width="800px"/>
+
+| System | Overall | Digital-only | Throughput\* |
+|---|---:|---:|---:|
+| [Chandra 2](https://github.com/datalab-to/chandra) (hosted) | 85.8 | — | — |
+| Gemini Flash 3.5 (API) | 76.4 | 79.1 | — |
+| **Marker — balanced** (GPU) | **76.0** | **83.5** | **2.9 pg/s** |
+| MinerU — pipeline (GPU) | 72.7 | 83.3 | 0.54 pg/s |
+| **Marker — fast** (GPU) | **66.6** | **71.6** | **7.4 pg/s** |
+| docling (GPU) | 50.3 | 64.0 | 2.1 pg/s |
+| **Marker — fast, no OCR** (CPU) | **43.6** | **55.8** | **23.7 pg/s** |
+| liteparse (CPU) | 22.4 | 27.3 | 8.9 pg/s |
+| liteparse, no OCR (CPU) | 20.4 | 25.0 | 1721 pg/s |
+
+Chandra 2 is our hosted model (numbers from the [Chandra repo](https://github.com/datalab-to/chandra)); Gemini Flash 3.5 is via API; MinerU / docling / liteparse are OSS pipelines.  Digital-only = macro-average over the 6 non-scanned categories (a subset most text-layer tools score higher on).
+
+\* Throughput is sustained **concurrent** pages/sec on one B200 host — the deployment-relevant number, not single-stream latency.  Each system runs on the GPU at its native parallelism (marker balanced/fast, MinerU, docling), except marker fast-no-OCR and liteparse which are CPU-only by design.  Chandra (hosted) and Gemini (API) have no local-hardware throughput.  Marker's design — thin CPU workers sharing one inference server (see [Throughput](#throughput)) — is what lets a GPU mode like balanced sustain ~2.9 pg/s rather than its ~0.3 pg/s single-stream rate.
+
+The table compares **pipeline systems** — marker (which reads the PDF text layer and OCRs selectively) against MinerU's **pipeline** backend and docling (also text-layer + selective OCR).  This is the apples-to-apples comparison, and marker balanced leads it on both score and throughput.  (docling runs its default pipeline: text layer for born-digital, OCR for image regions; MinerU's own VLM backend scores higher but is a different, full-page-VLM approach.)
+
+If your documents need **full-page VLM OCR** — math-heavy pages, scans, the highest possible accuracy — that's a different tool than a text-layer pipeline.  Reach for [Chandra](https://github.com/datalab-to/chandra) (our document VLM, 85.8 here) or [surya](https://github.com/datalab-to/surya) (the OCR VLM marker uses under the hood); both have their own olmocr-bench numbers in their repos.
+
+The same numbers as ranked bar charts (score across all systems; throughput for the local ones on a log scale):
+
+<img src="data/images/olmocr_scores_bar.png" width="49%"/> <img src="data/images/olmocr_throughput_bar.png" width="49%"/>
+
+### Born-digital, CPU-only
+
+If you only have born-digital PDFs and no GPU, the relevant comparison is pure-CPU text extractors.  Marker's `fast --disable_ocr` runs its 20M layout model on CPU and still reads structure (columns, tables, headers), so it scores far higher than a plain text dump — while liteparse (no layout model) is faster but collapses on anything non-linear.
+
+<img src="data/images/olmocr_digital.png" width="800px"/>
+
+### Marker modes, per category
+
+| Category | balanced | fast | no OCR |
+|----------------------|----------|------|--------|
+| arXiv math           | 83.9     | 23.4 | 0.0    |
+| Tables               | 73.4     | 69.0 | 46.1   |
+| Multi column         | 76.6     | 76.0 | 67.0   |
+| Headers & footers    | 95.9     | 93.2 | 92.8   |
+| Long tiny text       | 71.3     | 68.3 | 43.2   |
+| Old scans math       | 63.8     | 59.8 | 0.0    |
+| Old scans            | 43.2     | 43.2 | 14.3   |
+| Baseline             | 99.7     | 99.9 | 85.9   |
+| **Overall**          | **76.0** | **66.6** | **43.6** |
+| **Overall (born-digital only)** | **83.5** | **71.6** | **55.8** |
 
 Notes:
 
-- The digital-only split removes scanned PDFs and PDFs with a fake (previously OCR'd) text layer — 1,186 of the 1,403 PDFs.  Overall scores are test-weighted, and arXiv math makes up over half of the digital split's tests — that weighting is why fast mode's digital overall dips below its full-bench overall (and why `disable_ocr` barely moves) even though their non-math categories hold steady or improve on the digital split.
-- `--disable_ocr` never calls the VLM.  Math scores zero because equations have no text-layer representation - the other rows show what the pure text-layer pipeline extracts on CPU.
-- Fast mode's math score is low by design: it only block-OCRs equation blocks, not inline math inside text.  Use balanced mode for math-heavy documents.
+- Born-digital-only excludes the two scanned splits (old scans, old scans math).
+- Fast mode's math is lower by design: it reads equations from the PDF text layer rather than VLM-OCRing them, so LaTeX-level math tests (arXiv math) mostly miss.  Use balanced for math-heavy documents.
+- `--disable_ocr` (no OCR) never calls the VLM: math scores zero (equations have no text-layer LaTeX), and the raw text layer's garbled math glyphs also cost some baseline points.  It's the pure CPU text-layer path.
 
 ## Throughput
 
-With the shared inference server, throughput scales with server capacity rather than per-process VRAM: workers hold only small CPU models, and the parent budgets VLM concurrency across them automatically.  Clean digital pages in fast mode convert in well under a second per page on CPU alone.  Run `python benchmarks/throughput/main.py` to measure on your hardware ([sample long PDF](https://www.greenteapress.com/thinkpython/thinkpython.pdf)).
+<img src="data/images/marker_throughput.png" width="800px"/>
+
+Production throughput comes from **concurrency**, not per-page latency.  Marker runs many thin conversion workers that hold only small CPU models (layout, OCR-error) and share a single inference server; the parent process budgets VLM concurrency across them, so throughput scales with server capacity rather than per-process VRAM.
+
+Sustained steady-state over the 1,403-page olmocr-bench set on **one B200**:
+
+| Mode | Throughput | Effective latency/page |
+|---|---:|---:|
+| fast, no OCR | **23.7 pg/s** | 42 ms |
+| fast | **7.4 pg/s** | 134 ms |
+| balanced | **2.9 pg/s** | 341 ms |
+
+`fast, no OCR` is pure CPU (pdftext + a 20M layout model, no VLM) and is CPU-bound — it needs no GPU at all.  `fast` and `balanced` are GPU-assisted and still leave the GPU with headroom on a single B200 (balanced saturates only ~30% of it — the ceiling is the VLM's decode throughput, so throughput scales further with more/larger inference-server replicas).  Measure it on your own hardware with `benchmarks/inference.py` (see [benchmarks/README.md](benchmarks/README.md)); it reports sustained pages/sec at your chosen concurrency.
 
 ## Table Conversion
 
@@ -499,38 +557,13 @@ Marker can extract tables from PDFs using `marker.converters.table.TableConverte
 
 ## Running your own benchmarks
 
-To reproduce the olmocr-bench scores, convert the bench PDFs with marker (markdown output), then score the results with the [olmocr-bench harness](https://github.com/allenai/olmocr/tree/main/olmocr/bench) - it downloads the bench data and runs the unit tests against your outputs.
+Everything above — the olmocr-bench scores and the throughput numbers, for both marker and the competitors — is reproducible with the harness in [`benchmarks/`](benchmarks/).  In short:
 
-The repo also ships marker's own benchmark suite.  Install marker manually first:
+1. Clone [olmocr-bench](https://github.com/allenai/olmocr) and download its bench data (we don't vendor it).
+2. Run `benchmarks/inference.py` to convert the bench PDFs with marker at real worker concurrency — it writes scoreable per-page markdown *and* prints sustained pages/sec.
+3. Score the output with olmocr-bench's own checker, then run `benchmarks/summarize.py` to get the Overall (macro-average) and Digital-only numbers.
 
-```shell
-git clone https://github.com/datalab-to/marker.git
-poetry install
-```
-
-Download the benchmark data [here](https://drive.google.com/file/d/1ZSeWDo2g1y0BRLT7KnbmytV2bjWARWba/view?usp=sharing) and unzip, then run:
-
-```shell
-python benchmarks/overall/overall.py --methods marker --scores heuristic,llm
-```
-
-Options:
-
-- `--use_llm` use an llm to improve the marker results.
-- `--max_rows` how many rows to process for the benchmark.
-- `--methods` can be `llamaparse`, `mathpix`, `docling`, `marker`.  Comma separated.
-- `--scores` which scoring functions to use, can be `llm`, `heuristic`.  Comma separated.
-
-There is also a table-focused benchmark against [FinTabNet](https://huggingface.co/datasets/datalab-to/fintabnet-test) (auto-downloaded):
-
-```shell
-python benchmarks/table/table.py --max_rows 100
-```
-
-Options:
-
-- `--use_llm` uses an llm with marker to improve accuracy.
-- `--use_gemini` also benchmarks gemini flash.
+Competitor runners (liteparse, docling, MinerU), each using the tool's native parallelism, live in `benchmarks/competitors/`.  See [benchmarks/README.md](benchmarks/README.md) for the full step-by-step.
 
 # How it works
 
