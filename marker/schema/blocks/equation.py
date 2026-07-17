@@ -1,5 +1,11 @@
+import re
+
 from marker.schema import BlockTypes
 from marker.schema.blocks import Block
+
+# A single top-level <p>...</p> wrapper around the block's html (the VLM wraps
+# its output in <p>, and assemble_html adds its own paragraph wrapper).
+_P_WRAPPED = re.compile(r"^<p[^>]*>(.*)</p>$", re.DOTALL)
 
 
 class Equation(Block):
@@ -19,7 +25,12 @@ class Equation(Block):
             html_out = super().assemble_html(
                 document, child_ref_blocks, parent_structure, block_config
             )
-            html_out += f"""<p block-type='{self.block_type}'>{self.html}</p>"""
+            inner = self.html.strip()
+            # Unwrap a single outer <p> so we don't emit nested <p><p>.
+            m = _P_WRAPPED.match(inner)
+            if m and "<p" not in m.group(1):
+                inner = m.group(1)
+            html_out += f"""<p block-type='{self.block_type}'>{inner}</p>"""
             return html_out
         else:
             template = super().assemble_html(

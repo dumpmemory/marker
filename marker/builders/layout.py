@@ -1,16 +1,21 @@
 from typing import Annotated, List
 
+import numpy as np
+from surya.fast_layout import FastLayoutPredictor
 from surya.layout import LayoutPredictor
 from surya.layout.schema import LayoutResult, LayoutBox
 
 from marker.builders import BaseBuilder
+from marker.logger import get_logger
 from marker.providers.pdf import PdfProvider
 from marker.schema import BlockTypes
 from marker.schema.document import Document
 from marker.schema.groups.page import PageGroup
+from marker.schema.labels import BLANK_PAGE_LABEL, surya_label_to_block_type
 from marker.schema.polygon import PolygonBox
 from marker.schema.registry import get_block_class
-from marker.settings import settings
+
+logger = get_logger()
 
 
 class LayoutBuilder(BaseBuilder):
@@ -18,15 +23,38 @@ class LayoutBuilder(BaseBuilder):
     A builder for performing layout detection on PDF pages and merging the results into the document.
     """
 
-    layout_batch_size: Annotated[
-        int,
-        "The batch size to use for the layout model.",
-        "Default is None, which will use the default batch size for the model.",
-    ] = None
+    mode: Annotated[
+        str,
+        "Conversion mode: 'balanced' (default, GPU) uses the VLM layout model;",
+        "'fast' (CPU) uses the lightweight rf-detr/onnx layout detector.",
+    ] = "balanced"
+    disable_ocr: Annotated[
+        bool,
+        "Pure text-layer path (no VLM). Forces the lightweight rf-detr layout",
+        "detector so the whole pipeline runs on CPU without an inference server.",
+    ] = False
     force_layout_block: Annotated[
         str,
         "Skip layout and force every page to be treated as a specific block type.",
     ] = None
+    force_ocr: Annotated[
+        bool,
+        "Set when OCR is forced for the whole document. Layout is skipped -",
+        "full-page OCR rebuilds the page structure itself, and surya runs its",
+        "own layout lazily for any page whose full-page output fails.",
+    ] = False
+    ocr_full_page: Annotated[
+        bool,
+        "Mirrors the OcrBuilder setting - layout can only be skipped when",
+        "full-page OCR is in use.",
+    ] = True
+    use_pdftext_reading_order: Annotated[
+        bool,
+        "Mirrors the LineBuilder setting. When True (default), fast mode only",
+        "runs the learned reading-order head on textless (scanned) pages -",
+        "pdftext pages are reordered from the PDF character stream instead.",
+        "When False, the head runs on every page in fast mode.",
+    ] = True
     disable_tqdm: Annotated[
         bool,
         "Disable tqdm progress bars.",
@@ -38,31 +66,47 @@ class LayoutBuilder(BaseBuilder):
         BlockTypes.Picture,
         BlockTypes.Figure,
         BlockTypes.ComplexRegion,
+        BlockTypes.Diagram,
     ]  # Does not include groups since they are only injected later
     max_expand_frac: Annotated[
         float, "The maximum fraction to expand the layout box bounds by"
     ] = 0.05
 
-    def __init__(self, layout_model: LayoutPredictor, config=None):
+    def __init__(
+        self,
+        layout_model: LayoutPredictor,
+        fast_layout_model: FastLayoutPredictor,
+        config=None,
+    ):
         self.layout_model = layout_model
+        self.fast_layout_model = fast_layout_model
 
         super().__init__(config)
+
+    def use_fast_layout(self):
+        # Fast mode and disable_ocr (pure text-layer, no VLM) both use the
+        # lightweight rf-detr layout detector so no VLM server is required.
+        return self.mode == "fast" or self.disable_ocr
+
+    def get_layout_model(self):
+        return self.fast_layout_model if self.use_fast_layout() else self.layout_model
 
     def __call__(self, document: Document, provider: PdfProvider):
         if self.force_layout_block is not None:
             # Assign the full content of every page to a single layout type
             layout_results = self.forced_layout(document.pages)
+        elif self.force_ocr and self.ocr_full_page and self.mode == "balanced":
+            # Balanced + force_ocr: every page is rebuilt by full-page OCR, so
+            # don't pay for a layout pass that gets thrown away. Fast mode still
+            # needs layout boxes to drive block-mode OCR.
+            layout_results = [
+                LayoutResult(bboxes=[], image_bbox=page.polygon.bbox)
+                for page in document.pages
+            ]
         else:
-            layout_results = self.surya_layout(document.pages)
+            layout_results = self.surya_layout(document.pages, provider)
         self.add_blocks_to_pages(document.pages, layout_results)
         self.expand_layout_blocks(document)
-
-    def get_batch_size(self):
-        if self.layout_batch_size is not None:
-            return self.layout_batch_size
-        elif settings.TORCH_DEVICE_MODEL == "cuda":
-            return 12
-        return 6
 
     def forced_layout(self, pages: List[PageGroup]) -> List[LayoutResult]:
         layout_results = []
@@ -73,60 +117,107 @@ class LayoutBuilder(BaseBuilder):
                     bboxes=[
                         LayoutBox(
                             label=self.force_layout_block,
+                            raw_label=self.force_layout_block,
                             position=0,
-                            top_k={self.force_layout_block: 1},
+                            count=0,
                             polygon=page.polygon.polygon,
                         ),
                     ],
-                    sliced=False,
                 )
             )
         return layout_results
 
-    def surya_layout(self, pages: List[PageGroup]) -> List[LayoutResult]:
-        self.layout_model.disable_tqdm = self.disable_tqdm
-        layout_results = self.layout_model(
-            [p.get_image(highres=False) for p in pages],
-            batch_size=int(self.get_batch_size()),
-        )
-        return layout_results
+    def surya_layout(
+        self, pages: List[PageGroup], provider: PdfProvider
+    ) -> List[LayoutResult]:
+        model = self.get_layout_model()
+        model.disable_tqdm = self.disable_tqdm
+        images = [p.get_image(highres=False) for p in pages]
+        if not self.use_fast_layout():
+            return model(images)
+
+        # Fast mode skips the layout reading-order head wherever pdftext can
+        # order the page instead (LineBuilder reorders from the PDF character
+        # stream). The head still runs where no pdftext order exists: textless
+        # (scanned) pages, whose layout order seeds block-mode OCR and the
+        # per-page fallback when full-page OCR fails - and every page when
+        # pdftext ordering is turned off.
+        if not self.use_pdftext_reading_order:
+            return model(images, use_order=True)
+
+        need_order, raster = [], []
+        for i, page in enumerate(pages):
+            if provider.page_lines.get(page.page_id):
+                raster.append(i)
+            else:
+                need_order.append(i)
+
+        results: List[LayoutResult] = [None] * len(pages)
+        for idx, result in zip(
+            raster, model([images[i] for i in raster], use_order=False)
+        ):
+            results[idx] = result
+        for idx, result in zip(
+            need_order, model([images[i] for i in need_order], use_order=True)
+        ):
+            results[idx] = result
+        return results
 
     def expand_layout_blocks(self, document: Document):
         for page in document.pages:
-            # Collect all blocks on this page as PolygonBox for easy access
             page_blocks = [document.get_block(bid) for bid in page.structure]
             page_size = page.polygon.size
 
-            for block_id in page.structure:
-                block = document.get_block(block_id)
-                if block.block_type in self.expand_block_types:
-                    other_blocks = [b for b in page_blocks if b != block]
-                    if not other_blocks:
-                        block.polygon = block.polygon.expand(
-                            self.max_expand_frac, self.max_expand_frac
-                        ).fit_to_bounds((0, 0, *page_size))
-                        continue
+            expand_idxs = [
+                i
+                for i, block in enumerate(page_blocks)
+                if block.block_type in self.expand_block_types
+            ]
+            if not expand_idxs:
+                continue
 
-                    min_gap = min(
-                        block.polygon.minimum_gap(other.polygon)
-                        for other in other_blocks
-                    )
-                    if min_gap <= 0:
-                        continue
+            if len(page_blocks) == 1:
+                block = page_blocks[0]
+                block.polygon = block.polygon.expand(
+                    self.max_expand_frac, self.max_expand_frac
+                ).fit_to_bounds((0, 0, *page_size))
+                continue
 
-                    x_expand_frac = (
-                        min_gap / block.polygon.width if block.polygon.width > 0 else 0
-                    )
-                    y_expand_frac = (
-                        min_gap / block.polygon.height
-                        if block.polygon.height > 0
-                        else 0
-                    )
+            # Vectorized pairwise minimum_gap: for non-overlapping boxes the gap
+            # is the corner distance when diagonal, else the edge distance.
+            bboxes = np.array([b.polygon.bbox for b in page_blocks])  # (N, 4)
+            dx = np.maximum(
+                bboxes[None, :, 0] - bboxes[:, None, 2],
+                bboxes[:, None, 0] - bboxes[None, :, 2],
+            )
+            dy = np.maximum(
+                bboxes[None, :, 1] - bboxes[:, None, 3],
+                bboxes[:, None, 1] - bboxes[None, :, 3],
+            )
+            gaps = np.where(
+                (dx > 0) & (dy > 0),
+                np.hypot(dx, dy),
+                np.maximum(dx, 0) + np.maximum(dy, 0),
+            )
+            np.fill_diagonal(gaps, np.inf)
 
-                    block.polygon = block.polygon.expand(
-                        min(self.max_expand_frac, x_expand_frac),
-                        min(self.max_expand_frac, y_expand_frac),
-                    ).fit_to_bounds((0, 0, *page_size))
+            for i in expand_idxs:
+                block = page_blocks[i]
+                min_gap = gaps[i].min()
+                if min_gap <= 0 or not np.isfinite(min_gap):
+                    continue
+
+                x_expand_frac = (
+                    min_gap / block.polygon.width if block.polygon.width > 0 else 0
+                )
+                y_expand_frac = (
+                    min_gap / block.polygon.height if block.polygon.height > 0 else 0
+                )
+
+                block.polygon = block.polygon.expand(
+                    min(self.max_expand_frac, x_expand_frac),
+                    min(self.max_expand_frac, y_expand_frac),
+                ).fit_to_bounds((0, 0, *page_size))
 
     def add_blocks_to_pages(
         self, pages: List[PageGroup], layout_results: List[LayoutResult]
@@ -134,22 +225,35 @@ class LayoutBuilder(BaseBuilder):
         for page, layout_result in zip(pages, layout_results):
             layout_page_size = PolygonBox.from_bbox(layout_result.image_bbox).size
             provider_page_size = page.polygon.size
-            page.layout_sliced = (
-                layout_result.sliced
-            )  # This indicates if the page was sliced by the layout model
+
+            if layout_result.error:
+                logger.warning(
+                    f"Layout inference failed for page {page.page_id}; leaving page empty."
+                )
+
             for bbox in sorted(layout_result.bboxes, key=lambda x: x.position):
-                block_cls = get_block_class(BlockTypes[bbox.label])
+                if bbox.label == BLANK_PAGE_LABEL:
+                    continue
+
+                block_type = surya_label_to_block_type(bbox.label)
+                if block_type is None and bbox.label in BlockTypes.__members__:
+                    # force_layout_block can name any marker block type
+                    block_type = BlockTypes[bbox.label]
+                if block_type is None:
+                    logger.warning(
+                        f"Unknown layout label {bbox.label} on page {page.page_id}; skipping."
+                    )
+                    continue
+
+                block_cls = get_block_class(block_type)
                 layout_block = page.add_block(
                     block_cls, PolygonBox(polygon=bbox.polygon)
                 )
                 layout_block.polygon = layout_block.polygon.rescale(
                     layout_page_size, provider_page_size
                 ).fit_to_bounds((0, 0, *provider_page_size))
-                layout_block.top_k = {
-                    BlockTypes[label]: prob
-                    for (label, prob) in bbox.top_k.items()
-                    if label in BlockTypes.__members__
-                }
+                layout_block.top_k = {block_type: bbox.confidence or 1.0}
+                layout_block.layout_token_count = bbox.count
                 page.add_structure(layout_block)
 
             # Ensure page has non-empty structure

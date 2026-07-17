@@ -33,6 +33,9 @@ async def lifespan(app: FastAPI):
     yield
 
     if "models" in app_data:
+        from marker.models import shutdown_models
+
+        shutdown_models(app_data["models"])
         del app_data["models"]
 
 
@@ -81,6 +84,12 @@ class CommonParams(BaseModel):
             description="The format to output the text in.  Can be 'markdown', 'json', or 'html'.  Defaults to 'markdown'."
         ),
     ] = "markdown"
+    mode: Annotated[
+        str,
+        Field(
+            description="Conversion mode: 'balanced' (VLM layout, highest quality) or 'fast' (CPU layout, minimal VLM use). Defaults to 'balanced'."
+        ),
+    ] = "balanced"
 
 
 async def _convert_pdf(params: CommonParams):
@@ -135,6 +144,7 @@ async def convert_pdf(params: CommonParams):
 @app.post("/marker/upload")
 async def convert_pdf_upload(
     page_range: Optional[str] = Form(default=None),
+    mode: Optional[str] = Form(default="balanced"),
     force_ocr: Optional[bool] = Form(default=False),
     paginate_output: Optional[bool] = Form(default=False),
     output_format: Optional[str] = Form(default="markdown"),
@@ -150,6 +160,7 @@ async def convert_pdf_upload(
     params = CommonParams(
         filepath=upload_path,
         page_range=page_range,
+        mode=mode,
         force_ocr=force_ocr,
         paginate_output=paginate_output,
         output_format=output_format,

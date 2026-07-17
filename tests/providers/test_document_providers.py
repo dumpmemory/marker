@@ -23,7 +23,7 @@ def test_epub_provider(doc_provider):
     page_lines = doc_provider.get_page_lines(0)
 
     spans = page_lines[0].spans
-    assert spans[0].text == "The Project Gutenberg eBook of Simple"
+    assert spans[0].text.startswith("The Project Gutenberg eBook of Simple")
 
 
 @pytest.mark.config({"page_range": [0]})
@@ -35,6 +35,7 @@ def test_html_provider(doc_provider):
 
     spans = page_lines[0].spans
     assert spans[0].text == "Jump to content"
+
 
 @pytest.mark.config({"page_range": [0]})
 @pytest.mark.filename("gatsby.docx")

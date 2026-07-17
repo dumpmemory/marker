@@ -181,6 +181,13 @@ class Schema(BaseModel):
                 )
 
 # Move the run logic outside of col2
+mode = st.sidebar.selectbox(
+    "Mode",
+    ["balanced", "fast"],
+    index=0,
+    help="'balanced' uses the VLM layout model + full-page OCR (best on GPU). "
+    "'fast' uses lightweight CPU detectors and only OCRs garbled/empty content.",
+)
 run_marker = st.sidebar.button("Run Extraction")
 
 use_llm = st.sidebar.checkbox(
@@ -212,6 +219,7 @@ if run_marker:
                 "force_ocr": force_ocr,
                 "use_llm": use_llm,
                 "strip_existing_ocr": strip_existing_ocr,
+                "mode": mode,
             }
         )
 

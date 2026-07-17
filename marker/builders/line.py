@@ -1,11 +1,7 @@
-from copy import deepcopy
 from typing import Annotated, List, Tuple
 
 import numpy as np
-from PIL import Image
-import cv2
 
-from surya.detection import DetectionPredictor
 from surya.ocr_error import OCRErrorPredictor
 
 from marker.builders import BaseBuilder
@@ -14,24 +10,18 @@ from marker.providers.pdf import PdfProvider
 from marker.schema import BlockTypes
 from marker.schema.document import Document
 from marker.schema.groups.page import PageGroup
-from marker.schema.polygon import PolygonBox
-from marker.schema.registry import get_block_class
-from marker.schema.text.line import Line
 from marker.settings import settings
-from marker.util import matrix_intersection_area, sort_text_lines
+from marker.util import matrix_intersection_area
 from marker.utils.image import is_blank_image
 
 
 class LineBuilder(BaseBuilder):
     """
-    A builder for detecting text lines. Merges the detected lines with the lines from the provider
+    Decides per page whether the provider (embedded) text is good, or the page
+    needs OCR. Merges provider lines into the document for good pages; OCR'd
+    pages are filled in by the OcrBuilder at the layout-block level.
     """
 
-    detection_batch_size: Annotated[
-        int,
-        "The batch size to use for the detection model.",
-        "Default is None, which will use the default batch size for the model.",
-    ] = None
     ocr_error_batch_size: Annotated[
         int,
         "The batch size to use for the ocr error detection model.",
@@ -47,29 +37,29 @@ class LineBuilder(BaseBuilder):
         "The minimum coverage ratio required for the layout model to consider",
         "the lines from the PdfProvider valid.",
     ] = 0.25
-    min_document_ocr_threshold: Annotated[
-        float,
-        "If less pages than this threshold are good, OCR will happen in the document.  Otherwise it will not.",
-    ] = 0.85
     provider_line_provider_line_min_overlap_pct: Annotated[
         float,
-        "The percentage of a provider line that has to be covered by a detected line",
+        "The overlap fraction above which two provider lines are considered",
+        "duplicates of each other (used to detect duplicated OCR text layers).",
     ] = 0.1
+    overlap_line_fraction_threshold: Annotated[
+        float,
+        "Fraction of lines that must overlap several others before a page's",
+        "embedded text is considered garbled (e.g. a duplicate OCR text layer).",
+        "A few overlapping lines from inline math or figure labels are expected",
+        "on clean digital PDFs and should not trigger OCR.",
+    ] = 0.5
     excluded_for_coverage: Annotated[
         Tuple[BlockTypes],
         "A list of block types to exclude from the layout coverage check.",
     ] = (
         BlockTypes.Figure,
         BlockTypes.Picture,
+        BlockTypes.Diagram,
         BlockTypes.Table,
         BlockTypes.FigureGroup,
         BlockTypes.TableGroup,
         BlockTypes.PictureGroup,
-    )
-    ocr_remove_blocks: Tuple[BlockTypes, ...] = (
-        BlockTypes.Table,
-        BlockTypes.Form,
-        BlockTypes.TableOfContents,
     )
     disable_tqdm: Annotated[
         bool,
@@ -79,32 +69,118 @@ class LineBuilder(BaseBuilder):
         bool,
         "Disable OCR for the document. This will only use the lines from the provider.",
     ] = False
-    keep_chars: Annotated[bool, "Keep individual characters."] = False
-    detection_line_min_confidence: Annotated[float, "Minimum confidence for a detected line to be included"] = 0.8
+    keep_chars: Annotated[
+        bool,
+        "Keep individual characters. Only affects pdftext pages - OCR'd pages",
+        "carry block-level HTML with no character data.",
+    ] = False
+    use_pdftext_reading_order: Annotated[
+        bool,
+        "Order layout blocks on pdftext pages by the PDF's character reading",
+        "order. On by default: it beats learned reading-order models on",
+        "multi-column pages (olmocr-bench order tests: 75% vs 56%). OCR'd",
+        "pages get their order from full-page OCR instead. Turning this off",
+        "orders every page by the layout model (in fast mode this enables its",
+        "learned reading-order head for all pages).",
+    ] = True
+    mode: Annotated[
+        str,
+        "Conversion mode. 'balanced' promotes any page with flagged blocks to",
+        "full-page OCR; 'fast' repairs flagged blocks individually.",
+    ] = "balanced"
+    block_ocr_promote_fraction: Annotated[
+        float,
+        "In fast mode: if more than this fraction of a (mostly-good) page's",
+        "text blocks have bad or missing embedded text, OCR the whole page",
+        "instead of the individual blocks.",
+    ] = 0.5
+    min_ocr_block_area_fraction: Annotated[
+        float,
+        "Minimum area (as a fraction of the page) for an empty layout block to",
+        "be re-OCR'd. Filters out tiny layout fragments where pdftext assigned",
+        "the text to a neighboring block.",
+    ] = 0.01
+    min_garbled_text_chars: Annotated[
+        int,
+        "Minimum block text length before trusting the ocr error model's",
+        "garbled verdict. Short labels can't be judged reliably.",
+    ] = 50
+    block_garbled_check_min_page_score: Annotated[
+        float,
+        "Only run the (expensive) per-block garbled-text recheck on pages whose",
+        "page-level ocr-error P(bad) is at least this. Confidently-clean pages",
+        "below it skip it - the page-level model already cleared the whole page.",
+    ] = 0.05
+    # Blocks handled elsewhere (tables/equations), with no text, or dropped from
+    # output by default (page headers/footers - OCRing them wastes a VLM call,
+    # and a single flagged footer forces an otherwise-clean doc to spawn the
+    # inference server) - never eligible for block-level text OCR.
+    block_ocr_skip_types: Tuple[BlockTypes, ...] = (
+        BlockTypes.Picture,
+        BlockTypes.Figure,
+        BlockTypes.Diagram,
+        BlockTypes.Table,
+        BlockTypes.Form,
+        BlockTypes.TableOfContents,
+        BlockTypes.Equation,
+        BlockTypes.ChemicalBlock,
+        BlockTypes.PageHeader,
+        BlockTypes.PageFooter,
+    )
 
     def __init__(
         self,
-        detection_model: DetectionPredictor,
         ocr_error_model: OCRErrorPredictor,
         config=None,
     ):
         super().__init__(config)
 
-        self.detection_model = detection_model
         self.ocr_error_model = ocr_error_model
 
     def __call__(self, document: Document, provider: PdfProvider):
-        # Disable inline detection for documents where layout model doesn't detect any equations
-        # Also disable if we won't use the inline detections (if we aren't using the LLM)
-        provider_lines, ocr_lines = self.get_all_lines(document, provider)
-        self.merge_blocks(document, provider_lines, ocr_lines)
+        provider_lines = self.get_all_lines(document, provider)
+        self.merge_blocks(document, provider_lines)
+        self.order_blocks_by_reading_order(document)
+        if not self.disable_ocr:
+            self.flag_bad_blocks(document)
 
-    def get_detection_batch_size(self):
-        if self.detection_batch_size is not None:
-            return self.detection_batch_size
-        elif settings.TORCH_DEVICE_MODEL == "cuda":
-            return 10
-        return 4
+    def order_blocks_by_reading_order(self, document: Document):
+        """Order layout blocks on pdftext pages by the PDF's character reading
+        order, instead of the layout model's position.
+
+        The PDF's own character stream is the most reliable reading-order
+        signal (it beat surya's learned order head on multi-column pages), so
+        every pdftext page is ordered by ``span.minimum_position`` (pdftext
+        char start index = column-aware reading order). Because of this, the
+        fast layout model skips its reading-order head on pages with a text
+        layer (see ``LayoutBuilder.surya_layout``) - those boxes arrive
+        raster-sorted and are reordered here.
+
+        Text-less blocks (figures, empty boxes) keep their placement relative
+        to the text block they followed. OCR'd ("surya") pages are left
+        untouched - full-page OCR rebuilds their structure in reading order.
+        """
+        if not self.use_pdftext_reading_order:
+            return
+        for page in document.pages:
+            if page.text_extraction_method != "pdftext" or not page.structure:
+                continue
+
+            order = []
+            last_pos = -1  # text-less blocks before any text sort to the top
+            for original_idx, block_id in enumerate(page.structure):
+                block = page.get_block(block_id)
+                spans = block.contained_blocks(document, (BlockTypes.Span,))
+                char_pos = min((s.minimum_position for s in spans), default=None)
+                if char_pos is not None:
+                    last_pos = char_pos
+                # Text-less blocks inherit the preceding text block's position;
+                # original_idx breaks ties to preserve relative placement.
+                sort_pos = char_pos if char_pos is not None else last_pos
+                order.append((sort_pos, original_idx, block_id))
+
+            order.sort(key=lambda t: (t[0], t[1]))
+            page.structure = [block_id for _, _, block_id in order]
 
     def get_ocr_error_batch_size(self):
         if self.ocr_error_batch_size is not None:
@@ -113,42 +189,28 @@ class LineBuilder(BaseBuilder):
             return 14
         return 4
 
-    def get_detection_results(
-        self, page_images: List[Image.Image], run_detection: List[bool]
-    ):
-        self.detection_model.disable_tqdm = self.disable_tqdm
-        page_detection_results = self.detection_model(
-            images=page_images, batch_size=self.get_detection_batch_size()
-        )
-
-        assert len(page_detection_results) == sum(run_detection)
-        detection_results = []
-        idx = 0
-        for good in run_detection:
-            if good:
-                detection_results.append(page_detection_results[idx])
-                idx += 1
-            else:
-                detection_results.append(None)
-        assert idx == len(page_images)
-
-        assert len(run_detection) == len(detection_results)
-        return detection_results
-
     def get_all_lines(self, document: Document, provider: PdfProvider):
-        ocr_error_detection_results = self.ocr_error_detection(
-            document.pages, provider.page_lines
-        )
+        # disable_ocr keeps the PDF text layer regardless, so skip the
+        # ocr-error model entirely (no server needed on the pure-CPU path).
+        if self.disable_ocr:
+            labels = ["good"] * len(document.pages)
+            scores = [0.0] * len(document.pages)
+        else:
+            ocr_error_detection_results = self.ocr_error_detection(
+                document.pages, provider.page_lines
+            )
+            labels = ocr_error_detection_results.labels
+            # page-level P(bad); used to gate the per-block recheck.
+            scores = ocr_error_detection_results.scores or [
+                1.0 if lbl == "bad" else 0.0 for lbl in labels
+            ]
 
-        boxes_to_ocr = {page.page_id: [] for page in document.pages}
         page_lines = {page.page_id: [] for page in document.pages}
+        self.page_ocr_error_scores = {
+            page.page_id: score for page, score in zip(document.pages, scores)
+        }
 
-        LineClass: Line = get_block_class(BlockTypes.Line)
-
-        layout_good = []
-        for document_page, ocr_error_detection_label in zip(
-            document.pages, ocr_error_detection_results.labels
-        ):
+        for document_page, ocr_error_detection_label in zip(document.pages, labels):
             document_page.ocr_errors_detected = ocr_error_detection_label == "bad"
             provider_lines: List[ProviderOutput] = provider.page_lines.get(
                 document_page.page_id, []
@@ -166,70 +228,16 @@ class LineBuilder(BaseBuilder):
             if self.disable_ocr:
                 provider_lines_good = True
 
-            layout_good.append(provider_lines_good)
-
-        run_detection = [not good for good in layout_good]
-        page_images = [
-            page.get_image(highres=False, remove_blocks=self.ocr_remove_blocks)
-            for page, bad in zip(document.pages, run_detection)
-            if bad
-        ]
-
-        # Note: run_detection is longer than page_images, since it has a value for each page, not just good ones
-        # Detection results and inline detection results are for every page (we use run_detection to make the list full length)
-        detection_results = self.get_detection_results(page_images, run_detection)
-
-        assert len(detection_results) == len(layout_good) == len(document.pages)
-        for document_page, detection_result, provider_lines_good in zip(
-            document.pages, detection_results, layout_good
-        ):
-            provider_lines: List[ProviderOutput] = provider.page_lines.get(
-                document_page.page_id, []
-            )
-
-            # Setup detection results
-            detection_boxes = []
-            if detection_result:
-                detection_boxes = [
-                    PolygonBox(polygon=box.polygon) for box in detection_result.bboxes if box.confidence > self.detection_line_min_confidence
-                ]
-
-            detection_boxes = sort_text_lines(detection_boxes)
-
             if provider_lines_good:
                 document_page.text_extraction_method = "pdftext"
-
-                # Mark extraction method as pdftext, since all lines are good
                 for provider_line in provider_lines:
                     provider_line.line.text_extraction_method = "pdftext"
-
                 page_lines[document_page.page_id] = provider_lines
             else:
+                # Page content is filled in at the block level by the OcrBuilder
                 document_page.text_extraction_method = "surya"
-                boxes_to_ocr[document_page.page_id].extend(detection_boxes)
 
-        # Dummy lines to merge into the document - Contains no spans, will be filled in later by OCRBuilder
-        ocr_lines = {document_page.page_id: [] for document_page in document.pages}
-        for page_id, page_ocr_boxes in boxes_to_ocr.items():
-            page_size = provider.get_page_bbox(page_id).size
-            image_size = document.get_page(page_id).get_image(highres=False).size
-            for box_to_ocr in page_ocr_boxes:
-                line_polygon = PolygonBox(polygon=box_to_ocr.polygon).rescale(
-                    image_size, page_size
-                )
-                ocr_lines[page_id].append(
-                    ProviderOutput(
-                        line=LineClass(
-                            polygon=line_polygon,
-                            page_id=page_id,
-                            text_extraction_method="surya",
-                        ),
-                        spans=[],
-                        chars=[],
-                    )
-                )
-
-        return page_lines, ocr_lines
+        return page_lines
 
     def ocr_error_detection(
         self, pages: List[PageGroup], provider_page_lines: ProviderPageLines
@@ -251,6 +259,10 @@ class LineBuilder(BaseBuilder):
     def check_line_overlaps(
         self, document_page: PageGroup, provider_lines: List[ProviderOutput]
     ) -> bool:
+        if not provider_lines:
+            # No embedded text - the empty-lines case is handled by the caller
+            return True
+
         provider_bboxes = [line.line.polygon.bbox for line in provider_lines]
         # Add a small margin to account for minor overflows
         page_bbox = document_page.polygon.expand(5, 5).bbox
@@ -266,17 +278,17 @@ class LineBuilder(BaseBuilder):
                 return False
 
         intersection_matrix = matrix_intersection_area(provider_bboxes, provider_bboxes)
-        for i, line in enumerate(provider_lines):
-            intersect_counts = np.sum(
-                intersection_matrix[i]
-                > self.provider_line_provider_line_min_overlap_pct
-            )
+        # A line overlapping >2 others (itself + 2) is suspect. Inline math
+        # (stacked radical/fraction spans) and dense figure labels legitimately
+        # overlap a few neighbors, so a single bad line does not condemn the
+        # page - only a large fraction does (a duplicate/broken text layer).
+        intersect_counts = (
+            intersection_matrix > self.provider_line_provider_line_min_overlap_pct
+        ).sum(axis=1)
+        over_intersecting = int((intersect_counts > 2).sum())
 
-            # There should be one intersection with itself
-            if intersect_counts > 2:
-                return False
-
-        return True
+        bad_fraction = over_intersecting / len(provider_lines)
+        return bad_fraction <= self.overlap_line_fraction_threshold
 
     def check_layout_coverage(
         self,
@@ -333,9 +345,8 @@ class LineBuilder(BaseBuilder):
 
         good_lines = []
         for line in lines:
-            line_polygon_rescaled = deepcopy(line.line.polygon).rescale(
-                page_size, image_size
-            )
+            # rescale() already returns a new PolygonBox, so no deepcopy needed
+            line_polygon_rescaled = line.line.polygon.rescale(page_size, image_size)
             line_bbox = line_polygon_rescaled.fit_to_bounds((0, 0, *image_size)).bbox
 
             if not is_blank_image(page_image.crop(line_bbox)):
@@ -347,23 +358,101 @@ class LineBuilder(BaseBuilder):
         self,
         document: Document,
         page_provider_lines: ProviderPageLines,
-        page_ocr_lines: ProviderPageLines,
     ):
         for document_page in document.pages:
             provider_lines: List[ProviderOutput] = page_provider_lines[
                 document_page.page_id
             ]
-            ocr_lines: List[ProviderOutput] = page_ocr_lines[document_page.page_id]
+            if not provider_lines:
+                continue
 
-            # Only one or the other will have lines
             # Filter out blank lines which come from bad provider boxes, or invisible text
-            merged_lines = self.filter_blank_lines(
-                document_page, provider_lines + ocr_lines
-            )
+            merged_lines = self.filter_blank_lines(document_page, provider_lines)
 
-            # Text extraction method is overridden later for OCRed documents
             document_page.merge_blocks(
                 merged_lines,
-                text_extraction_method="pdftext" if provider_lines else "surya",
+                text_extraction_method="pdftext",
                 keep_chars=self.keep_chars,
             )
+
+    def flag_bad_blocks(self, document: Document):
+        """On pages that pass as pdftext, flag individual text blocks whose
+        embedded text is missing or garbled so the OcrBuilder re-OCRs just
+        those blocks. If too many blocks on a page are bad, promote the whole
+        page to full-page OCR.
+
+        The signals are deliberately conservative - layout boxes and pdftext
+        lines never align perfectly, so an "empty" box is usually just text
+        pdftext assigned to a neighbor, and the prose-trained ocr error model
+        is unreliable on short labels. We only OCR an empty block if it is a
+        substantial region with actual ink (a genuine scanned/image element),
+        and only trust the garbled signal on blocks with enough text to judge.
+        """
+        # Collect candidate blocks across all pdftext pages, then batch the
+        # garbled-text check through the ocr error model.
+        page_text_blocks = {}  # page_id -> list of eligible blocks
+        garbled_candidates = []  # (block, text) for blocks with enough text
+        page_scores = getattr(self, "page_ocr_error_scores", {})
+        for page in document.pages:
+            if page.text_extraction_method != "pdftext":
+                continue
+            page_image = page.get_image()
+            image_size = page_image.size
+            page_size = page.polygon.size
+            min_area = self.min_ocr_block_area_fraction * page.polygon.area
+            # Confidently-clean pages skip the per-block garbled recheck (the
+            # page-level model already judged the whole page's text). The
+            # empty-block-with-ink check below still runs (catches embedded scans).
+            check_garbled = (
+                page_scores.get(page.page_id, 1.0)
+                >= self.block_garbled_check_min_page_score
+            )
+            blocks = [
+                b
+                for b in page.structure_blocks(document)
+                if b.block_type not in self.block_ocr_skip_types
+            ]
+            page_text_blocks[page.page_id] = blocks
+            for block in blocks:
+                text = block.raw_text(document).strip()
+                if not text:
+                    # An empty layout box is usually a fragment whose text
+                    # pdftext put in a neighbor, not missing content. Only OCR
+                    # substantial regions that actually contain ink.
+                    if block.polygon.area < min_area:
+                        continue
+                    crop_bbox = (
+                        block.polygon.rescale(page_size, image_size)
+                        .fit_to_bounds((0, 0, *image_size))
+                        .bbox
+                    )
+                    if is_blank_image(page_image.crop(crop_bbox)):
+                        continue
+                    block.text_extraction_method = "surya"
+                elif check_garbled and len(text) >= self.min_garbled_text_chars:
+                    garbled_candidates.append((block, text))
+
+        if garbled_candidates:
+            self.ocr_error_model.disable_tqdm = self.disable_tqdm
+            labels = self.ocr_error_model(
+                [t for _, t in garbled_candidates],
+                batch_size=int(self.get_ocr_error_batch_size()),
+            ).labels
+            for (block, _), label in zip(garbled_candidates, labels):
+                if label == "bad":
+                    block.text_extraction_method = "surya"
+
+        # Promote bad pages to full-page OCR. Balanced promotes on ANY flagged
+        # block (re-reading the whole page in context is the higher-quality
+        # repair); fast promotes only when most blocks are bad, and fixes the
+        # rest surgically with per-block OCR (cheaper than a page decode).
+        promote_fraction = (
+            0.0 if self.mode == "balanced" else self.block_ocr_promote_fraction
+        )
+        for page in document.pages:
+            blocks = page_text_blocks.get(page.page_id)
+            if not blocks:
+                continue
+            bad = sum(1 for b in blocks if b.text_extraction_method == "surya")
+            if bad / len(blocks) > promote_fraction:
+                page.text_extraction_method = "surya"

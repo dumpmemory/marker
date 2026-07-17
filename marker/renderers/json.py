@@ -41,7 +41,7 @@ class JSONRenderer(BaseRenderer):
     image_blocks: Annotated[
         Tuple[BlockTypes],
         "The list of block types to consider as images.",
-    ] = (BlockTypes.Picture, BlockTypes.Figure)
+    ] = (BlockTypes.Picture, BlockTypes.Figure, BlockTypes.Diagram)
     page_blocks: Annotated[
         Tuple[BlockTypes],
         "The list of block types to consider as pages.",

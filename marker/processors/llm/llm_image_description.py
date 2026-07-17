@@ -12,6 +12,7 @@ class LLMImageDescriptionProcessor(BaseLLMSimpleBlockProcessor):
     block_types = (
         BlockTypes.Picture,
         BlockTypes.Figure,
+        BlockTypes.Diagram,
     )
     extract_images: Annotated[bool, "Extract images from the document."] = True
     image_description_prompt: Annotated[

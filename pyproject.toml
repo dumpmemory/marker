@@ -1,11 +1,11 @@
 [tool.poetry]
 name = "marker-pdf"
-version = "1.10.1"
+version = "1.10.2"
 description = "Convert documents to markdown with high speed and accuracy."
 authors = ["Vik Paruchuri <github@vikas.sh>"]
 readme = "README.md"
-license = "GPL-3.0-or-later"
-repository = "https://github.com/VikParuchuri/marker"
+license = "Apache-2.0"
+repository = "https://github.com/datalab-to/marker"
 keywords = ["pdf", "markdown", "ocr", "nlp"]
 packages = [
     {include = "marker"}
@@ -20,21 +20,22 @@ python = "^3.10"
 Pillow = "^10.1.0"
 pydantic = "^2.4.2"
 pydantic-settings = "^2.0.3"
-transformers = "^4.45.2"
+transformers = ">=5.12.1,<6.0.0"
 python-dotenv = "^1.0.0"
 torch = "^2.7.0"
+psutil = "^7.0.0"
 tqdm = "^4.66.1"
 ftfy = "^6.1.1"
 rapidfuzz = "^3.8.1"
-surya-ocr = "^0.17.0"
-regex = "^2024.4.28"
-pdftext = "~0.6.3"
+surya-ocr = "~0.22.0"
+regex = ">=2024.4.28"
+pdftext = "~0.7.0"
 markdownify = "^1.1.0"
 click = "^8.2.0"
 markdown2 = "^2.5.2"
 filetype = "^1.2.0"
-google-genai = "^1.0.0"
-anthropic = "^0.46.0"
+google-genai = ">=1.40.0,<3.0.0"
+anthropic = ">=0.69.0,<1.0.0"
 pre-commit = "^4.2.0"
 scikit-learn = "^1.6.1"
 
@@ -44,12 +45,13 @@ openpyxl = {version = "^3.1.5", optional = true}
 python-pptx = {version = "^1.0.2", optional = true}
 ebooklib = {version = "^0.18", optional = true}
 weasyprint = {version = "^63.1", optional = true}
-openai = "^1.65.2"
+openai = ">=2.2.0,<3.0.0"
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0.0"
 datasets = "^2.21.0"
 streamlit = "^1.37.1"
+streamlit-ace = "^0.1.1"
 fastapi = "^0.115.4"
 uvicorn = "^0.32.0"
 python-multipart = "^0.0.16"
@@ -68,7 +70,6 @@ full = ["mammoth", "openpyxl", "python-pptx", "ebooklib", "weasyprint"]
 [tool.poetry.scripts]
 marker = "marker.scripts.convert:convert_cli"
 marker_single = "marker.scripts.convert_single:convert_single_cli"
-marker_chunk_convert = "marker.scripts.chunk_convert:chunk_convert_cli"
 marker_gui = "marker.scripts.run_streamlit_app:streamlit_app_cli"
 marker_extract = "marker.scripts.run_streamlit_app:extraction_app_cli"
 marker_server = "marker.scripts.server:server_cli"

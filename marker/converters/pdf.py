@@ -39,6 +39,7 @@ from marker.processors.sectionheader import SectionHeaderProcessor
 from marker.processors.table import TableProcessor
 from marker.processors.text import TextProcessor
 from marker.processors.block_relabel import BlockRelabelProcessor
+from marker.processors.marginalia import MarginaliaProcessor
 from marker.processors.blank_page import BlankPageProcessor
 from marker.processors.llm.llm_equation import LLMEquationProcessor
 from marker.renderers.markdown import MarkdownRenderer
@@ -47,7 +48,6 @@ from marker.schema.blocks import Block
 from marker.schema.registry import register_block_class
 from marker.util import strings_to_classes
 from marker.processors.llm.llm_handwriting import LLMHandwritingProcessor
-from marker.processors.order import OrderProcessor
 from marker.services.gemini import GoogleGeminiService
 from marker.processors.line_merge import LineMergeProcessor
 from marker.processors.llm.llm_mathblock import LLMMathBlockProcessor
@@ -71,8 +71,13 @@ class PdfConverter(BaseConverter):
         bool,
         "Enable higher quality processing with LLMs.",
     ] = False
+    mode: Annotated[
+        str,
+        "Conversion mode: 'balanced' (default, GPU) uses the VLM layout model and",
+        "full-page OCR; 'fast' (CPU) uses lightweight rf-detr/onnx detectors for",
+        "layout + tables and only block-OCRs garbled/empty content.",
+    ] = "balanced"
     default_processors: Tuple[BaseProcessor, ...] = (
-        OrderProcessor,
         BlockRelabelProcessor,
         LineMergeProcessor,
         BlockquoteProcessor,
@@ -84,6 +89,7 @@ class PdfConverter(BaseConverter):
         LineNumbersProcessor,
         ListProcessor,
         PageHeaderProcessor,
+        MarginaliaProcessor,
         SectionHeaderProcessor,
         TableProcessor,
         LLMTableProcessor,

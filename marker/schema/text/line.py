@@ -43,20 +43,6 @@ class Line(Block):
         None  # Sometimes we want to set math format at the line level, not span
     )
 
-    def ocr_input_text(self, document):
-        text = ""
-        for block in self.contained_blocks(document, (BlockTypes.Span,)):
-            # We don't include superscripts/subscripts and math since they can be unreliable at this stage
-            block_text = block.text
-            if block.italic:
-                text += f"<i>{block_text}</i>"
-            elif block.bold:
-                text += f"<b>{block_text}</b>"
-            else:
-                text += block_text
-
-        return text.strip()
-
     def formatted_text(self, document, skip_urls=False):
         text = ""
         for block in self.contained_blocks(document, (BlockTypes.Span,)):

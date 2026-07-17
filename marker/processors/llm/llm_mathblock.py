@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Tuple, Annotated
+from typing import List, Annotated
 
 from pydantic import BaseModel
 from tqdm import tqdm
@@ -17,6 +17,9 @@ class LLMMathBlockProcessor(BaseLLMComplexBlockProcessor):
     redo_inline_math: Annotated[
         bool,
         "If True, the inline math will be re-done, otherwise it will be left as is.",
+        "Requires use_llm. Balanced mode already OCRs inline math natively",
+        "(see EquationProcessor.ocr_inline_math); this is mainly useful with",
+        "fast mode or a different LLM.",
     ] = False
     inlinemath_min_ratio: Annotated[
         float,
@@ -144,7 +147,7 @@ Adversarial training <i>(AT)</i> <a href='#page-9-1'>[23]</a>, which aims to min
         pbar = tqdm(
             total=total_blocks,
             desc=f"{self.__class__.__name__} running",
-            disable=self.disable_tqdm
+            disable=self.disable_tqdm,
         )
         with ThreadPoolExecutor(max_workers=self.max_concurrency) as executor:
             for future in as_completed(
@@ -162,11 +165,6 @@ Adversarial training <i>(AT)</i> <a href='#page-9-1'>[23]</a>, which aims to min
         html = json_to_html(block.render(document))
         html = unwrap_outer_tag(html)  # Remove an outer p tag if it exists
         return html
-
-    def get_block_lines(self, block: Block, document: Document) -> Tuple[list, list]:
-        text_lines = block.contained_blocks(document, (BlockTypes.Line,))
-        extracted_lines = [line.formatted_text(document) for line in text_lines]
-        return text_lines, extracted_lines
 
     def process_rewriting(self, document: Document, page: PageGroup, block: Block):
         block_text = self.get_block_text(block, document)

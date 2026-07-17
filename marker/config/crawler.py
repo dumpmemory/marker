@@ -78,15 +78,6 @@ class ConfigCrawler:
         return annotations
 
     @cached_property
-    def attr_counts(self) -> Dict[str, int]:
-        counts: Dict[str, int] = {}
-        for base_type_dict in self.class_config_map.values():
-            for class_map in base_type_dict.values():
-                for attr in class_map["config"].keys():
-                    counts[attr] = counts.get(attr, 0) + 1
-        return counts
-
-    @cached_property
     def attr_set(self) -> Set[str]:
         attr_set: Set[str] = set()
         for base_type_dict in self.class_config_map.values():

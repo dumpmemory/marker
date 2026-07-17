@@ -1,11 +1,10 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
-import numpy as np
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from PIL import Image, ImageDraw
 
 from pdftext.schema import Reference
-from pydantic import computed_field
+from pydantic import computed_field, PrivateAttr
 
 from marker.providers import ProviderOutput
 from marker.schema import BlockTypes
@@ -24,9 +23,6 @@ class PageGroup(Group):
     lowres_image: Image.Image | None | bytes = None
     highres_image: Image.Image | None | bytes = None
     children: List[Union[Any, Block]] | None = None
-    layout_sliced: bool = (
-        False  # Whether the layout model had to slice the image (order may be wrong)
-    )
     excluded_block_types: Sequence[BlockTypes] = (
         BlockTypes.Line,
         BlockTypes.Span,
@@ -35,6 +31,13 @@ class PageGroup(Group):
     block_description: str = "A single page in the document."
     refs: List[Reference] | None = None
     ocr_errors_detected: bool = False
+    # Raw pdftext page dict (with chars), used for table cell text assignment.
+    # Released after table processing.
+    pdftext_page: dict | None = None
+    # Lazily renders the high-res page image on first access (non-persistent:
+    # opens/renders/closes the PDF per call). Set by DocumentBuilder so clean
+    # text-only pages, which never need high-res, skip the upfront render.
+    _highres_loader: Optional[Callable[[int], Image.Image]] = PrivateAttr(default=None)
 
     def incr_block_id(self):
         if self.block_id is None:
@@ -55,6 +58,10 @@ class PageGroup(Group):
         remove_blocks: Sequence[BlockTypes] | None = None,
         **kwargs,
     ):
+        if highres and self.highres_image is None and self._highres_loader is not None:
+            # Deferred render: this page was not pre-rendered at high-res
+            # (e.g. a clean text page later needed by an LLM processor).
+            self.highres_image = self._highres_loader(self.page_id)
         image = self.highres_image if highres else self.lowres_image
 
         # Check if RGB, convert if needed
@@ -92,7 +99,10 @@ class PageGroup(Group):
 
         structure_idx = 0
         if block is not None:
-            structure_idx = self.structure.index(block.id) + 1
+            pos = self.structure_index(block.id)
+            if pos is None:
+                return None
+            structure_idx = pos + 1
 
         # Iterate over blocks following the given block
         for next_block_id in self.structure[structure_idx:]:
@@ -102,8 +112,8 @@ class PageGroup(Group):
         return None  # No valid next block found
 
     def get_prev_block(self, block: Block):
-        block_idx = self.structure.index(block.id)
-        if block_idx > 0:
+        block_idx = self.structure_index(block.id)
+        if block_idx:
             return self.get_block(self.structure[block_idx - 1])
         return None
 
@@ -159,21 +169,6 @@ class PageGroup(Group):
                 blocks[max_intersection].id,
             )
         return max_intersections
-
-    def compute_max_structure_block_intersection_pct(self):
-        structure_blocks = [self.get_block(block_id) for block_id in self.structure]
-        strucure_block_bboxes = [b.polygon.bbox for b in structure_blocks]
-
-        intersection_matrix = matrix_intersection_area(strucure_block_bboxes, strucure_block_bboxes)
-        np.fill_diagonal(intersection_matrix, 0)    # Ignore self-intersections
-
-        max_intersection_pct = 0
-        for block_idx, block in enumerate(structure_blocks):
-            if block.polygon.area == 0:
-                continue
-            max_intersection_pct = max(max_intersection_pct, np.max(intersection_matrix[block_idx]) / block.polygon.area)
-
-        return max_intersection_pct
 
     def replace_block(self, block: Block, new_block: Block):
         # Handles incrementing the id

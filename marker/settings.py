@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # General models
     TORCH_DEVICE: Optional[str] = (
-        None  # Note: MPS device does not work for text detection, and will default to CPU
+        None  # Device for the local torch models (ocr error, fast layout); the VLM runs on the inference server
     )
 
     @computed_field
@@ -43,14 +43,6 @@ class Settings(BaseSettings):
             return "mps"
 
         return "cpu"
-
-    @computed_field
-    @property
-    def MODEL_DTYPE(self) -> torch.dtype:
-        if self.TORCH_DEVICE_MODEL == "cuda":
-            return torch.bfloat16
-        else:
-            return torch.float32
 
     class Config:
         env_file = find_dotenv("local.env")
