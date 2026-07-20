@@ -26,7 +26,7 @@ def test_pdf_converter(pdf_converter: PdfConverter, temp_doc):
 
 
 @pytest.mark.filename("manual.epub")
-@pytest.mark.config({"page_range": [0]})
+@pytest.mark.config({"page_range": [0], "mode": "balanced"})
 def test_epub_converter(pdf_converter: PdfConverter, temp_doc):
     markdown_output: MarkdownOutput = pdf_converter(temp_doc.name)
     markdown = markdown_output.markdown
@@ -36,7 +36,7 @@ def test_epub_converter(pdf_converter: PdfConverter, temp_doc):
 
 
 @pytest.mark.filename("single_sheet.xlsx")
-@pytest.mark.config({"page_range": [0]})
+@pytest.mark.config({"page_range": [0], "mode": "balanced"})
 def test_xlsx_converter(pdf_converter: PdfConverter, temp_doc):
     markdown_output: MarkdownOutput = pdf_converter(temp_doc.name)
     markdown = markdown_output.markdown
@@ -46,7 +46,7 @@ def test_xlsx_converter(pdf_converter: PdfConverter, temp_doc):
 
 
 @pytest.mark.filename("china.html")
-@pytest.mark.config({"page_range": [11]})
+@pytest.mark.config({"page_range": [11], "mode": "balanced"})
 def test_html_converter(pdf_converter: PdfConverter, temp_doc):
     markdown_output: MarkdownOutput = pdf_converter(temp_doc.name)
     markdown = markdown_output.markdown
@@ -56,7 +56,7 @@ def test_html_converter(pdf_converter: PdfConverter, temp_doc):
 
 
 @pytest.mark.filename("gatsby.docx")
-@pytest.mark.config({"page_range": [0]})
+@pytest.mark.config({"page_range": [0], "mode": "balanced"})
 def test_docx_converter(pdf_converter: PdfConverter, temp_doc):
     markdown_output: MarkdownOutput = pdf_converter(temp_doc.name)
     markdown = markdown_output.markdown
@@ -66,7 +66,7 @@ def test_docx_converter(pdf_converter: PdfConverter, temp_doc):
 
 
 @pytest.mark.filename("lambda.pptx")
-@pytest.mark.config({"page_range": [0]})
+@pytest.mark.config({"page_range": [0], "mode": "balanced"})
 def test_pptx_converter(pdf_converter: PdfConverter, temp_doc):
     markdown_output: MarkdownOutput = pdf_converter(temp_doc.name)
     markdown = markdown_output.markdown
