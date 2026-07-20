@@ -6,7 +6,6 @@ from typing import Annotated, Dict, Set, Type, get_args, get_origin
 
 from marker.builders import BaseBuilder
 from marker.converters import BaseConverter
-from marker.extractors import BaseExtractor
 from marker.processors import BaseProcessor
 from marker.providers import BaseProvider
 from marker.renderers import BaseRenderer
@@ -23,7 +22,6 @@ class ConfigCrawler:
             BaseProvider,
             BaseRenderer,
             BaseService,
-            BaseExtractor,
         ),
     ):
         self.base_classes = base_classes

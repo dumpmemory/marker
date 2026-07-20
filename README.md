@@ -27,25 +27,22 @@ Marker converts documents to markdown, JSON, chunks, and HTML quickly and accura
 - Extracts and saves images
 - Removes headers/footers/other artifacts
 - Extensible with your own formatting and logic
-- Does structured extraction, given a JSON schema (beta)
 - Optionally boost accuracy with LLMs (and your own prompt)
 - Works on GPU, CPU, or MPS
 
 ## Try Datalab's Managed Platform
 
-Our managed platform runs our latest open source model, [Chandra](https://github.com/datalab-to/chandra) — higher accuracy than Marker, with zero data retention by default, SOC 2 Type 2, and custom BAAs.
+Our managed platform runs a version of our latest open source model, [Chandra](https://github.com/datalab-to/chandra) — higher accuracy than Marker, with zero data retention by default, SOC 2 Type 2, and custom BAAs.
 
-If you have high volume workloads, we offer a batch processing service that has processed 200M+ pages per week — we manage the infrastructure so your workloads finish on time.
+If you have high volume workloads, we offer a batch processing service that has processed 1B+ pages per week — we manage the infrastructure so your workloads finish on time.
 
-Get started with **$5 in free credits** — [sign up](https://www.datalab.to/?utm_source=gh-marker) — takes under 30 seconds — or try our [public playground](https://www.datalab.to/playground?utm_source=gh-marker).
-
-The code is Apache 2.0; the model weights are free for research, personal use, and smaller companies, and require a license for larger commercial use — see [Commercial usage](#commercial-usage). For on-prem licensing, [contact us](https://www.datalab.to/contact?utm_source=gh-marker-onprem).
+Get started with **$5 in free credits** — [sign up](https://www.datalab.to/?utm_source=gh-marker).
 
 ## Performance
 
 <img src="data/images/olmocr_bench.png" width="800px"/>
 
-We measure marker on [olmocr-bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench), a third-party benchmark of 1,403 PDFs with ~8,400 unit tests covering math, tables, multi-column layout, scans, and hard edge cases.  Balanced mode scores **76.0%** overall — **83.5%** on born-digital PDFs — ahead of MinerU and docling and within range of much larger VLMs, while fast mode runs the layout + text-layer path far cheaper (and a no-OCR mode goes faster still).  Scores are the olmocr-bench overall (macro-average across the 8 categories).
+We measure marker on [olmocr-bench](https://github.com/allenai/olmocr/tree/main/olmocr/bench), a third-party benchmark of 1,403 PDFs with tests covering math, tables, multi-column layout, scans, and hard edge cases.  Balanced mode scores **76.0%** overall — **83.5%** on born-digital PDFs — ahead of MinerU and docling and within range of much larger VLMs, while fast mode runs the layout + text-layer path far cheaper (and a no-OCR mode goes faster still).  Scores are the olmocr-bench overall (macro-average across the 8 categories).
 
 <img src="data/images/olmocr_digital.png" width="700px"/>
 
@@ -65,7 +62,7 @@ For the highest accuracy, pass the `--use_llm` flag to use an LLM alongside mark
 
 # Commercial usage
 
-Our code is licensed under **Apache 2.0** — free to use, including commercially. Our model weights use a modified AI Pubs Open Rail-M license (free for research, personal use, and startups under $2M funding/revenue). For commercial use of the model weights beyond that, visit our pricing page [here](https://www.datalab.to/pricing?utm_source=gh-marker).
+Our code is licensed under **Apache 2.0** — free to use, including commercially. Our model weights use a modified AI Pubs Open Rail-M license (free for research, personal use, and startups under $5M funding/revenue). For commercial use of the model weights beyond that, visit our pricing page [here](https://www.datalab.to/pricing?utm_source=gh-marker).
 
 # Community
 
@@ -109,8 +106,6 @@ I've included a streamlit app that lets you interactively try marker with some b
 pip install -U streamlit streamlit-ace
 marker_gui
 ```
-
-There is also a structured-extraction playground: `marker_extract`.
 
 ## Convert a single file
 
@@ -273,34 +268,6 @@ You can also run this via the CLI with
 ```shell
 marker_single FILENAME --converter_cls marker.converters.ocr.OCRConverter
 ```
-
-### Structured Extraction (beta)
-
-You can run structured extraction via the `ExtractionConverter`.  This requires an llm service to be setup first (see [here](#llm-services) for details).  You'll get a JSON output with the extracted values.
-
-```python
-from marker.converters.extraction import ExtractionConverter
-from marker.models import create_model_dict
-from marker.config.parser import ConfigParser
-from pydantic import BaseModel
-
-class Links(BaseModel):
-    links: list[str]
-
-schema = Links.model_json_schema()
-config_parser = ConfigParser({
-    "page_schema": schema
-})
-
-converter = ExtractionConverter(
-    artifact_dict=create_model_dict(),
-    config=config_parser.generate_config_dict(),
-    llm_service=config_parser.get_llm_service(),
-)
-rendered = converter("FILEPATH")
-```
-
-Rendered will have an `original_markdown` field.  If you pass this back in next time you run the converter, as the `existing_markdown` config key, you can skip re-parsing the document.
 
 # Output Formats
 

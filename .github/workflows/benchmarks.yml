@@ -14,24 +14,25 @@ jobs:
       matrix:
         os: [t4_gpu, ubuntu-latest]
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.11
+      - uses: actions/checkout@v4
       - name: Install apt dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y pandoc
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: latest
+          enable-cache: true
+      - name: Set up Python 3.11
+        run: uv python install 3.11
       - name: Install python dependencies
-        run: |
-          pip install poetry
-          poetry install --extras "full"
+        run: uv sync --frozen --group dev --extra full
       - name: Run benchmark test
         run: |
-          poetry run python benchmarks/overall/overall.py --max_rows 5
-          poetry run python benchmarks/verify_scores.py conversion_results/benchmark/overall/result.json --type marker
+          uv run python benchmarks/overall/overall.py --max_rows 5
+          uv run python benchmarks/verify_scores.py conversion_results/benchmark/overall/result.json --type marker
       - name: Run table benchmark
         run: |
-          poetry run python benchmarks/table/table.py --max_rows 5
-          poetry run python benchmarks/verify_scores.py conversion_results/benchmark/table/table.json --type table
+          uv run python benchmarks/table/table.py --max_rows 5
+          uv run python benchmarks/verify_scores.py conversion_results/benchmark/table/table.json --type table

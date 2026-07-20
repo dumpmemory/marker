@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from PIL import Image
 
 from marker.renderers import CONTENT_REF_RE
-from marker.renderers.extraction import ExtractionOutput
 from marker.renderers.html import HTMLOutput
 from marker.renderers.json import JSONOutput, JSONBlockOutput
 from marker.renderers.markdown import MarkdownOutput
@@ -69,8 +68,6 @@ def text_from_rendered(rendered: BaseModel):
         return rendered.model_dump_json(exclude=["metadata"], indent=2), "json", {}
     elif isinstance(rendered, OCRJSONOutput):
         return rendered.model_dump_json(exclude=["metadata"], indent=2), "json", {}
-    elif isinstance(rendered, ExtractionOutput):
-        return rendered.document_json, "json", {}
     else:
         raise ValueError("Invalid output type")
 
