@@ -1,10 +1,14 @@
 import sys
 from contextlib import suppress
 import click
+import pytest
 
 from marker.config.printer import CustomClickPrinter
 from marker.config.crawler import crawler
 from marker.config.parser import ConfigParser
+
+# CPU-only: config/CLI parsing, no models or inference server.
+pytestmark = pytest.mark.cpu
 
 
 def capture_kwargs(argv):

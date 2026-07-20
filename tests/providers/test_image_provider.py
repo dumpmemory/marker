@@ -1,7 +1,10 @@
+import pytest
+
 from marker.providers.image import ImageProvider
 from marker.renderers.markdown import MarkdownOutput
 
 
+@pytest.mark.cpu  # provider only, no models; the conversion test below needs the VLM
 def test_image_provider(config, temp_image):
     provider = ImageProvider(temp_image.name, config)
     assert len(provider) == 1

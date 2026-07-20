@@ -1,5 +1,8 @@
 import pytest
 
+# CPU-only: doc->pdf conversion (weasyprint) + text extraction, no models.
+pytestmark = pytest.mark.cpu
+
 
 @pytest.mark.config({"page_range": [0]})
 @pytest.mark.filename("lambda.pptx")

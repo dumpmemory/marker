@@ -1,5 +1,8 @@
 import pytest
 
+# CPU-only: pdftext text/image extraction, no models or inference server.
+pytestmark = pytest.mark.cpu
+
 
 @pytest.mark.config({"page_range": [0]})
 def test_pdf_provider(doc_provider):
