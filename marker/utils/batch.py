@@ -16,6 +16,11 @@ def get_worker_count(oversubscribe: float = 1.5, no_server: bool = False) -> int
     if no_server:
         return max(1, physical_cores - 2)
     server_parallel = surya_settings.SURYA_INFERENCE_PARALLEL
+    if server_parallel is None:
+        # Default: parallelism auto-scales to server capacity, which is only
+        # known once the backend spawns. Size the pool by CPU alone and let
+        # the server govern its own concurrency.
+        return max(1, physical_cores - 2)
 
     workers = min(
         max(1, physical_cores - 2),

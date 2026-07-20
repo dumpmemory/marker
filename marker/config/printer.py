@@ -48,8 +48,13 @@ class CustomClickPrinter(click.Command):
             Optional[str],
         ]
 
-        # Add shared attribute options first
+        # Add shared attribute options first. Skip attrs the command already
+        # defines explicitly (e.g. --mode in common_options) - a duplicate
+        # click.Option would shadow the explicit one and warn.
+        existing_opts = {opt for param in ctx.command.params for opt in param.opts}
         for attr, info in shared_attrs.items():
+            if "--" + attr in existing_opts:
+                continue
             if info["type"] in attr_types:
                 ctx.command.params.append(
                     click.Option(
