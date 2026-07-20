@@ -109,6 +109,11 @@ use_llm = st.sidebar.checkbox(
     "Use LLM", help="Use LLM for higher quality processing", value=False
 )
 force_ocr = st.sidebar.checkbox("Force OCR", help="Force OCR on all pages", value=False)
+disable_ocr = st.sidebar.checkbox(
+    "Disable OCR",
+    help="Never call the VLM - pure text-layer extraction (equations and scanned pages are skipped).",
+    value=False,
+)
 strip_existing_ocr = st.sidebar.checkbox(
     "Strip existing OCR",
     help="Strip existing OCR text from the PDF and re-OCR.",
@@ -130,6 +135,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             "output_format": output_format,
             "page_range": page_range,
             "force_ocr": force_ocr,
+            "disable_ocr": disable_ocr,
             "debug": debug,
             "output_dir": settings.DEBUG_DATA_FOLDER if debug else None,
             "use_llm": use_llm,
