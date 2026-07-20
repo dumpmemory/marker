@@ -100,6 +100,13 @@ class LineBuilder(BaseBuilder):
         "be re-OCR'd. Filters out tiny layout fragments where pdftext assigned",
         "the text to a neighboring block.",
     ] = 0.01
+    empty_block_contained_threshold: Annotated[
+        float,
+        "If an empty layout block is contained in a text-bearing sibling by at",
+        "least this fraction of its own area, skip re-OCR - the region's text is",
+        "already captured, so OCRing it would duplicate content. Guards against",
+        "overlapping layout boxes (e.g. line-numbered transcript pages).",
+    ] = 0.75
     min_garbled_text_chars: Annotated[
         int,
         "Minimum block text length before trusting the ocr error model's",
@@ -407,19 +414,35 @@ class LineBuilder(BaseBuilder):
                 page_scores.get(page.page_id, 1.0)
                 >= self.block_garbled_check_min_page_score
             )
+            structure_blocks = page.structure_blocks(document)
+            block_text = {b.id: b.raw_text(document).strip() for b in structure_blocks}
+            # Blocks that already carry text - used to suppress OCR of empty
+            # layout boxes whose region a text-bearing sibling already covers.
+            text_bearing = [b for b in structure_blocks if block_text[b.id]]
             blocks = [
                 b
-                for b in page.structure_blocks(document)
+                for b in structure_blocks
                 if b.block_type not in self.block_ocr_skip_types
             ]
             page_text_blocks[page.page_id] = blocks
             for block in blocks:
-                text = block.raw_text(document).strip()
+                text = block_text[block.id]
                 if not text:
                     # An empty layout box is usually a fragment whose text
                     # pdftext put in a neighbor, not missing content. Only OCR
                     # substantial regions that actually contain ink.
                     if block.polygon.area < min_area:
+                        continue
+                    # Overlapping layout boxes (e.g. line-numbered transcript
+                    # pages) can leave a big empty box on top of a sibling that
+                    # already holds the text. Its crop isn't blank - the ink is
+                    # there - but OCRing it would duplicate captured content.
+                    if any(
+                        other.id != block.id
+                        and block.polygon.intersection_pct(other.polygon)
+                        >= self.empty_block_contained_threshold
+                        for other in text_bearing
+                    ):
                         continue
                     crop_bbox = (
                         block.polygon.rescale(page_size, image_size)

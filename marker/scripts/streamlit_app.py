@@ -120,6 +120,11 @@ strip_existing_ocr = st.sidebar.checkbox(
     help="Strip existing OCR text from the PDF and re-OCR.",
     value=False,
 )
+keep_headers_footers = st.sidebar.checkbox(
+    "Show page headers/footers",
+    help="Keep running page headers and footers in the output instead of stripping them.",
+    value=False,
+)
 debug = st.sidebar.checkbox("Debug", help="Show debug information", value=False)
 
 if not run_marker:
@@ -141,6 +146,8 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             "output_dir": settings.DEBUG_DATA_FOLDER if debug else None,
             "use_llm": use_llm,
             "strip_existing_ocr": strip_existing_ocr,
+            "keep_pageheader_in_output": keep_headers_footers,
+            "keep_pagefooter_in_output": keep_headers_footers,
             # "auto" -> leave unset so the converter picks by device.
             "mode": None if mode == "auto" else mode,
         }
