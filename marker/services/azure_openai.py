@@ -71,7 +71,8 @@ class AzureOpenAIService(BaseService):
         total_tries = max_retries + 1
         for tries in range(1, total_tries + 1):
             try:
-                response = client.beta.chat.completions.parse(
+                # parse() is GA in openai>=1.92 - use it directly (not beta)
+                response = client.chat.completions.parse(
                     extra_headers={
                         "X-Title": "Marker",
                         "HTTP-Referer": "https://github.com/datalab-to/marker",

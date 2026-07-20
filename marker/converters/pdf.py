@@ -39,15 +39,16 @@ from marker.processors.sectionheader import SectionHeaderProcessor
 from marker.processors.table import TableProcessor
 from marker.processors.text import TextProcessor
 from marker.processors.block_relabel import BlockRelabelProcessor
+from marker.processors.marginalia import MarginaliaProcessor
 from marker.processors.blank_page import BlankPageProcessor
 from marker.processors.llm.llm_equation import LLMEquationProcessor
 from marker.renderers.markdown import MarkdownRenderer
+from marker.settings import settings
 from marker.schema import BlockTypes
 from marker.schema.blocks import Block
 from marker.schema.registry import register_block_class
 from marker.util import strings_to_classes
 from marker.processors.llm.llm_handwriting import LLMHandwritingProcessor
-from marker.processors.order import OrderProcessor
 from marker.services.gemini import GoogleGeminiService
 from marker.processors.line_merge import LineMergeProcessor
 from marker.processors.llm.llm_mathblock import LLMMathBlockProcessor
@@ -71,8 +72,14 @@ class PdfConverter(BaseConverter):
         bool,
         "Enable higher quality processing with LLMs.",
     ] = False
+    mode: Annotated[
+        str,
+        "Conversion mode. 'balanced' uses the VLM layout model and full-page OCR;",
+        "'fast' uses lightweight rf-detr/onnx detectors for layout + tables and only",
+        "block-OCRs garbled/empty content. Defaults by device: 'balanced' on GPU,",
+        "'fast' on CPU/MPS.",
+    ] = None
     default_processors: Tuple[BaseProcessor, ...] = (
-        OrderProcessor,
         BlockRelabelProcessor,
         LineMergeProcessor,
         BlockquoteProcessor,
@@ -84,6 +91,7 @@ class PdfConverter(BaseConverter):
         LineNumbersProcessor,
         ListProcessor,
         PageHeaderProcessor,
+        MarginaliaProcessor,
         SectionHeaderProcessor,
         TableProcessor,
         LLMTableProcessor,
@@ -115,6 +123,16 @@ class PdfConverter(BaseConverter):
 
         if config is None:
             config = {}
+
+        # Resolve a device-appropriate default mode when the caller didn't choose
+        # one. 'balanced' leans on the VLM for layout + full-page OCR and wants a
+        # GPU; cpu/mps default to 'fast' (rf-detr/onnx layout, minimal VLM use).
+        if not config.get("mode"):
+            config["mode"] = (
+                "balanced" if settings.TORCH_DEVICE_MODEL == "cuda" else "fast"
+            )
+        self.config = config
+        self.mode = config["mode"]
 
         for block_type, override_block_type in self.override_map.items():
             register_block_class(block_type, override_block_type)

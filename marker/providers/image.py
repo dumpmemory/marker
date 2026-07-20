@@ -38,7 +38,21 @@ class ImageProvider(BaseProvider):
         return self.image_count
 
     def get_images(self, idxs: List[int], dpi: int) -> List[Image.Image]:
-        return [self.images[i] for i in idxs]
+        # Treat the native image as 96 dpi - higher dpi requests (OCR) get an
+        # upscaled copy so small images stay legible for the model
+        scale = dpi / 96
+        if scale <= 1:
+            return [self.images[i] for i in idxs]
+        return [
+            self.images[i].resize(
+                (
+                    int(self.images[i].size[0] * scale),
+                    int(self.images[i].size[1] * scale),
+                ),
+                Image.LANCZOS,
+            )
+            for i in idxs
+        ]
 
     def get_page_bbox(self, idx: int) -> PolygonBox | None:
         bbox = self.page_bboxes[idx]

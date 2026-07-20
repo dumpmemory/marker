@@ -24,6 +24,7 @@ class ChunkOutput(BaseModel):
     page_info: Dict[int, dict]
     metadata: dict
 
+
 def collect_images(block: JSONBlockOutput) -> dict[str, str]:
     if not getattr(block, "children", None):
         return block.images or {}
@@ -33,14 +34,23 @@ def collect_images(block: JSONBlockOutput) -> dict[str, str]:
             images.update(collect_images(child_block))
         return images
 
+
 def assemble_html_with_images(block: JSONBlockOutput, image_blocks: set[str]) -> str:
+    # Operates only on the top-level/group block tree: leaf-type blocks are
+    # already flattened into a single html string by extract_block_html (they
+    # carry no children here), so this hits the no-parse branch for them and
+    # only re-parses the shallow group blocks. Kept on BeautifulSoup because its
+    # historical escape-then-unescape of inlined children is load-bearing for
+    # byte-identical output (e.g. literal <img> tags in figure groups).
     if not getattr(block, "children", None):
         if block.block_type in image_blocks:
             return f"<p>{block.html}<img src='{block.id}'></p>"
         else:
             return block.html
 
-    child_html = [assemble_html_with_images(child, image_blocks) for child in block.children]
+    child_html = [
+        assemble_html_with_images(child, image_blocks) for child in block.children
+    ]
     child_ids = [child.id for child in block.children]
 
     soup = BeautifulSoup(block.html, "html.parser")
@@ -52,12 +62,16 @@ def assemble_html_with_images(block: JSONBlockOutput, image_blocks: set[str]) ->
 
     return html.unescape(str(soup))
 
+
 def json_to_chunks(
-    block: JSONBlockOutput, image_blocks: set[str], page_id: int=0) -> FlatBlockOutput | List[FlatBlockOutput]:
+    block: JSONBlockOutput, image_blocks: set[str], page_id: int = 0
+) -> FlatBlockOutput | List[FlatBlockOutput]:
     if block.block_type == "Page":
         children = block.children
         page_id = int(block.id.split("/")[-1])
-        return [json_to_chunks(child, image_blocks, page_id=page_id) for child in children]
+        return [
+            json_to_chunks(child, image_blocks, page_id=page_id) for child in children
+        ]
     else:
         return FlatBlockOutput(
             id=block.id,
@@ -72,7 +86,6 @@ def json_to_chunks(
 
 
 class ChunkRenderer(JSONRenderer):
-
     def __call__(self, document: Document) -> ChunkOutput:
         document_output = document.render(self.block_config)
         json_output = []
@@ -82,7 +95,9 @@ class ChunkRenderer(JSONRenderer):
         # This will get the top-level blocks from every page
         chunk_output = []
         for item in json_output:
-            chunks = json_to_chunks(item, set([str(block) for block in self.image_blocks]))
+            chunks = json_to_chunks(
+                item, set([str(block) for block in self.image_blocks])
+            )
             chunk_output.extend(chunks)
 
         page_info = {

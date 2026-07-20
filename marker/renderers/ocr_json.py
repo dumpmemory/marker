@@ -46,7 +46,7 @@ class OCRJSONRenderer(BaseRenderer):
     image_blocks: Annotated[
         Tuple[BlockTypes],
         "The list of block types to consider as images.",
-    ] = (BlockTypes.Picture, BlockTypes.Figure)
+    ] = (BlockTypes.Picture, BlockTypes.Figure, BlockTypes.Diagram)
     page_blocks: Annotated[
         Tuple[BlockTypes],
         "The list of block types to consider as pages.",
@@ -56,8 +56,9 @@ class OCRJSONRenderer(BaseRenderer):
         pages = []
         for page in document.pages:
             page_equations = [
-                b for b in page.children if b.block_type == BlockTypes.Equation
-                and not b.removed
+                b
+                for b in page.children
+                if b.block_type == BlockTypes.Equation and not b.removed
             ]
             equation_lines = []
             for equation in page_equations:
@@ -78,7 +79,33 @@ class OCRJSONRenderer(BaseRenderer):
                 and not block.removed
             ]
 
+            # OCR'd blocks carry html directly and have no line children
+            html_blocks = [
+                block
+                for block in page.children
+                if block.block_type
+                not in (
+                    BlockTypes.Line,
+                    BlockTypes.Span,
+                    BlockTypes.Char,
+                    BlockTypes.Equation,
+                )
+                and not block.removed
+                and not block.structure
+                and getattr(block, "html", None)
+            ]
+
             lines = []
+            for block in html_blocks:
+                lines.append(
+                    OCRJSONLineOutput(
+                        id=str(block.id),
+                        block_type=str(block.block_type),
+                        html=block.html,
+                        polygon=block.polygon.polygon,
+                        bbox=block.polygon.bbox,
+                    )
+                )
             for line in page_lines + page_equations:
                 line_obj = OCRJSONLineOutput(
                     id=str(line.id),

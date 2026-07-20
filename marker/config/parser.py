@@ -52,7 +52,7 @@ class ConfigParser:
             "--disable_multiprocessing",
             is_flag=True,
             default=False,
-            help="Disable multiprocessing.",
+            help="Run pdftext extraction single-process (sets pdftext_workers=1).",
         )(fn)
         fn = click.option(
             "--disable_image_extraction",
@@ -81,30 +81,47 @@ class ConfigParser:
             default=None,
             help="LLM service to use - should be full import path, like marker.services.gemini.GoogleGeminiService",
         )(fn)
+        fn = click.option(
+            "--mode",
+            type=click.Choice(["balanced", "fast"]),
+            default=None,
+            help="Conversion mode. 'balanced' uses the VLM layout model + full-page "
+            "OCR (best on GPU). 'fast' uses lightweight CPU detectors for layout/tables "
+            "and only block-OCRs garbled/empty content. Default by device: balanced on "
+            "GPU, fast on CPU/MPS.",
+        )(fn)
         return fn
 
     def generate_config_dict(self) -> Dict[str, any]:
         config = {}
         output_dir = self.cli_options.get("output_dir", settings.OUTPUT_DIR)
         for k, v in self.cli_options.items():
-            if not v:
+            # None means "not provided". Explicit falsy values (False, 0) are
+            # real settings and must flow through - dropping them made it
+            # impossible to turn a default-True option off from the CLI.
+            if v is None:
                 continue
 
             match k:
                 case "debug":
-                    config["debug_pdf_images"] = True
-                    config["debug_layout_images"] = True
-                    config["debug_json"] = True
-                    config["debug_data_folder"] = output_dir
+                    if v:
+                        config["debug_pdf_images"] = True
+                        config["debug_layout_images"] = True
+                        config["debug_json"] = True
+                        config["debug_data_folder"] = output_dir
                 case "page_range":
-                    config["page_range"] = parse_range_str(v)
+                    if v:
+                        config["page_range"] = parse_range_str(v)
                 case "config_json":
-                    with open(v, "r", encoding="utf-8") as f:
-                        config.update(json.load(f))
+                    if v:
+                        with open(v, "r", encoding="utf-8") as f:
+                            config.update(json.load(f))
                 case "disable_multiprocessing":
-                    config["pdftext_workers"] = 1
+                    if v:
+                        config["pdftext_workers"] = 1
                 case "disable_image_extraction":
-                    config["extract_images"] = False
+                    if v:
+                        config["extract_images"] = False
                 case _:
                     config[k] = v
 

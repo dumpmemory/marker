@@ -5,7 +5,11 @@ import time
 import psutil
 import torch
 
-from marker.utils.batch import get_batch_sizes_worker_counts
+from marker.utils.batch import get_worker_count
+
+# Let unsupported MPS ops fall back to CPU (Apple Silicon); matches the other
+# entrypoints. Workers/servers spawned here inherit this.
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 # Ensure threads don't contend
 os.environ["MKL_DYNAMIC"] = "FALSE"
@@ -15,9 +19,6 @@ os.environ["OPENBLAS_NUM_THREADS"] = "2"
 os.environ["MKL_NUM_THREADS"] = "2"
 os.environ["GRPC_VERBOSITY"] = "ERROR"
 os.environ["GLOG_minloglevel"] = "2"
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = (
-    "1"  # Transformers uses .isin for a simple op, which is not supported on MPS
-)
 os.environ["IN_STREAMLIT"] = "true"  # Avoid multiprocessing inside surya
 
 import math
@@ -33,14 +34,15 @@ from marker.config.printer import CustomClickPrinter
 from marker.logger import configure_logging, get_logger
 from marker.models import create_model_dict
 from marker.output import output_exists, save_output
-from marker.utils.gpu import GPUManager
 
 configure_logging()
 logger = get_logger()
 
 
-def worker_init():
-    model_dict = create_model_dict()
+def worker_init(model_device: str | None = None):
+    # The VLM predictors attach to the server the parent process spawned
+    # (via SURYA_INFERENCE_URL). Only the small ocr error model loads locally.
+    model_dict = create_model_dict(device=model_device)
 
     global model_refs
     model_refs = model_dict
@@ -73,6 +75,12 @@ def process_single_pdf(args):
     converter_cls = config_parser.get_converter_cls()
     config_dict = config_parser.generate_config_dict()
     config_dict["disable_tqdm"] = True
+    # This is a worker process in a multiprocessing pool. pdftext runs a
+    # ProcessPoolExecutor of its own when workers > 1 (pypdfium2 is not
+    # thread-safe, so it forks per-page work); nesting that inside our worker
+    # pool deadlocks. Force in-process pdftext (workers<=1) so each worker holds
+    # exactly one pdftext instance. Throughput comes from the pool's breadth.
+    config_dict["pdftext_workers"] = 1
 
     try:
         if cli_options.get("debug_print"):
@@ -104,12 +112,18 @@ def process_single_pdf(args):
 
 @click.command(cls=CustomClickPrinter)
 @click.argument("in_folder", type=str)
-@click.option("--chunk_idx", type=int, default=0, help="Chunk index to convert")
+@click.option(
+    "--chunk_idx",
+    type=int,
+    default=0,
+    help="This node's shard index (multi-node: give each node a distinct chunk_idx).",
+)
 @click.option(
     "--num_chunks",
     type=int,
     default=1,
-    help="Number of chunks being processed in parallel",
+    help="Shard the file list into this many chunks (multi-node batch runs: "
+    "one marker invocation per node, each with its own inference server).",
 )
 @click.option(
     "--max_files", type=int, default=None, help="Maximum number of pdfs to convert"
@@ -126,7 +140,7 @@ def process_single_pdf(args):
 @click.option(
     "--max_tasks_per_worker",
     type=int,
-    default=10,
+    default=200,
     help="Maximum number of tasks per worker process before recycling.",
 )
 @click.option(
@@ -165,39 +179,67 @@ def convert_cli(in_folder: str, **kwargs):
 
     chunk_idx = kwargs["chunk_idx"]
 
-    # Use GPU context manager for automatic setup/cleanup
-    with GPUManager(chunk_idx) as gpu_manager:
-        batch_sizes, workers = get_batch_sizes_worker_counts(gpu_manager, 7)
-
-        # Override workers if specified
-        if kwargs["workers"] is not None:
-            workers = kwargs["workers"]
-
-        # Set proper batch sizes and thread counts
+    no_server = bool(kwargs.get("disable_ocr"))
+    if no_server:
+        # Pure text-layer mode: no VLM at all, so no server and the pool is
+        # sized purely by CPU cores.
+        workers = kwargs["workers"] or get_worker_count(no_server=True)
         total_processes = max(1, min(len(files_to_convert), workers))
-        kwargs["total_torch_threads"] = max(
-            2, psutil.cpu_count(logical=False) // total_processes
-        )
-        kwargs.update(batch_sizes)
+    else:
+        # Spawn (or attach to) the shared inference server from the parent
+        # process so it outlives worker recycling and is cleaned up when this
+        # process exits. Workers attach to it via SURYA_INFERENCE_URL.
+        from surya.inference import SuryaInferenceManager
 
-        logger.info(
-            f"Converting {len(files_to_convert)} pdfs in chunk {kwargs['chunk_idx'] + 1}/{kwargs['num_chunks']} with {total_processes} processes and saving to {kwargs['output_dir']}"
-        )
-        task_args = [(f, kwargs) for f in files_to_convert]
+        manager = SuryaInferenceManager(lazy=False)
+        server_handle = manager.backend.start()  # Idempotent, returns handle
+        os.environ["SURYA_INFERENCE_URL"] = server_handle.base_url
 
-        start_time = time.time()
-        with mp.Pool(
-            processes=total_processes,
-            initializer=worker_init,
-            maxtasksperchild=kwargs["max_tasks_per_worker"],
-        ) as pool:
-            pbar = tqdm(total=len(task_args), desc="Processing PDFs", unit="pdf")
-            for page_count in pool.imap_unordered(process_single_pdf, task_args):
-                pbar.update(1)
-                total_pages += page_count
-            pbar.close()
+        workers = kwargs["workers"] or get_worker_count()
+        total_processes = max(1, min(len(files_to_convert), workers))
 
-        total_time = time.time() - start_time
-        print(
-            f"Inferenced {total_pages} pages in {total_time:.2f} seconds, for a throughput of {total_pages / total_time:.2f} pages/sec for chunk {chunk_idx + 1}/{kwargs['num_chunks']}"
-        )
+        # Budget aggregate client concurrency to ~1.5x the server's capacity:
+        # each worker's client otherwise fans out to the FULL capacity on its
+        # own, so N workers would queue N-times-capacity requests. Respect an
+        # explicit SURYA_INFERENCE_PARALLEL from the user.
+        if "SURYA_INFERENCE_PARALLEL" not in os.environ:
+            capacity = manager.capacity()
+            per_worker = max(1, math.ceil(capacity * 1.5 / total_processes))
+            os.environ["SURYA_INFERENCE_PARALLEL"] = str(per_worker)
+            logger.info(
+                f"Server capacity {capacity}; using {per_worker} concurrent "
+                f"requests per worker across {total_processes} workers"
+            )
+
+    # The VLM runs on the server; workers only hold the small ocr error model.
+    # Keep it off the GPU in multi-worker mode - the server owns the VRAM.
+    model_device = None
+    if total_processes > 1 and torch.cuda.is_available():
+        model_device = "cpu"
+
+    kwargs["total_torch_threads"] = max(
+        2, psutil.cpu_count(logical=False) // total_processes
+    )
+
+    logger.info(
+        f"Converting {len(files_to_convert)} pdfs in chunk {kwargs['chunk_idx'] + 1}/{kwargs['num_chunks']} with {total_processes} processes and saving to {kwargs['output_dir']}"
+    )
+    task_args = [(f, kwargs) for f in files_to_convert]
+
+    start_time = time.time()
+    with mp.Pool(
+        processes=total_processes,
+        initializer=worker_init,
+        initargs=(model_device,),
+        maxtasksperchild=kwargs["max_tasks_per_worker"],
+    ) as pool:
+        pbar = tqdm(total=len(task_args), desc="Processing PDFs", unit="pdf")
+        for page_count in pool.imap_unordered(process_single_pdf, task_args):
+            pbar.update(1)
+            total_pages += page_count
+        pbar.close()
+
+    total_time = time.time() - start_time
+    print(
+        f"Inferenced {total_pages} pages in {total_time:.2f} seconds, for a throughput of {total_pages / total_time:.2f} pages/sec for chunk {chunk_idx + 1}/{kwargs['num_chunks']}"
+    )

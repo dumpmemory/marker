@@ -1,38 +1,35 @@
 import pytest
 
 from marker.schema import BlockTypes
-from marker.schema.text.line import Line
 
 
 def _ocr_pipeline_test(pdf_document):
     first_page = pdf_document.pages[0]
-    assert first_page.structure[0] == "/page/0/SectionHeader/0"
+    assert first_page.text_extraction_method == "surya"
+    assert len(first_page.structure) > 0
 
+    # Full-page OCR rebuilds the page structure from the model output
     first_block = first_page.get_block(first_page.structure[0])
     assert first_block.text_extraction_method == "surya"
     assert first_block.block_type == BlockTypes.SectionHeader
 
-    first_text_block: Line = first_page.get_block(first_block.structure[0])
-    assert first_text_block.block_type == BlockTypes.Line
+    # OCR'd blocks carry the model html directly, with no line children
+    assert first_block.structure == []
+    assert "Subspace Adversarial Training" in first_block.html
 
-    first_span = first_page.get_block(first_text_block.structure[0])
-    assert first_span.block_type == BlockTypes.Span
-    assert first_span.text.strip() == "Subspace Adversarial Training"
-
-    # Ensure we match all text lines up properly
-    # Makes sure the OCR bbox is being scaled to the same scale as the layout boxes
+    # No Line blocks are created for OCR'd pages
     text_lines = first_page.contained_blocks(pdf_document, (BlockTypes.Line,))
-    text_blocks = first_page.contained_blocks(
-        pdf_document, (BlockTypes.Text, BlockTypes.TextInlineMath)
-    )
-    # assert len(text_lines) == 83
+    assert len(text_lines) == 0
 
-    # Ensure the bbox sizes match up
-    max_line_position = max([line.polygon.y_end for line in text_lines])
-    max_block_position = max(
-        [block.polygon.y_end for block in text_blocks if block.source == "layout"]
-    )
-    assert max_line_position <= (max_block_position * 1.02)
+    # Every text-bearing block should have html from the OCR pass
+    ocr_blocks = [
+        block
+        for block in first_page.structure_blocks(pdf_document)
+        if block.block_type
+        in (BlockTypes.Text, BlockTypes.SectionHeader, BlockTypes.TextInlineMath)
+    ]
+    assert len(ocr_blocks) > 0
+    assert all(block.html for block in ocr_blocks)
 
 
 @pytest.mark.config({"force_ocr": True, "page_range": [0]})

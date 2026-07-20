@@ -6,7 +6,6 @@ from typing import Annotated, Dict, Set, Type, get_args, get_origin
 
 from marker.builders import BaseBuilder
 from marker.converters import BaseConverter
-from marker.extractors import BaseExtractor
 from marker.processors import BaseProcessor
 from marker.providers import BaseProvider
 from marker.renderers import BaseRenderer
@@ -23,7 +22,6 @@ class ConfigCrawler:
             BaseProvider,
             BaseRenderer,
             BaseService,
-            BaseExtractor,
         ),
     ):
         self.base_classes = base_classes
@@ -76,15 +74,6 @@ class ConfigCrawler:
                 for name, annotation in base.__annotations__.items():
                     annotations[name] = annotation
         return annotations
-
-    @cached_property
-    def attr_counts(self) -> Dict[str, int]:
-        counts: Dict[str, int] = {}
-        for base_type_dict in self.class_config_map.values():
-            for class_map in base_type_dict.values():
-                for attr in class_map["config"].keys():
-                    counts[attr] = counts.get(attr, 0) + 1
-        return counts
 
     @cached_property
     def attr_set(self) -> Set[str]:

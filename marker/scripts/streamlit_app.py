@@ -96,23 +96,36 @@ page_range = st.sidebar.text_input(
 output_format = st.sidebar.selectbox(
     "Output format", ["markdown", "json", "html", "chunks"], index=0
 )
+mode = st.sidebar.selectbox(
+    "Mode",
+    ["auto", "balanced", "fast"],
+    index=0,
+    help="'auto' picks by device: balanced on GPU, fast on CPU/MPS. "
+    "'balanced' uses the VLM layout model + full-page OCR (best on GPU). "
+    "'fast' uses lightweight CPU detectors and only OCRs garbled/empty content.",
+)
 run_marker = st.sidebar.button("Run Marker")
 
 use_llm = st.sidebar.checkbox(
     "Use LLM", help="Use LLM for higher quality processing", value=False
 )
 force_ocr = st.sidebar.checkbox("Force OCR", help="Force OCR on all pages", value=False)
+disable_ocr = st.sidebar.checkbox(
+    "Disable OCR",
+    help="Never call the VLM - pure text-layer extraction (equations and scanned pages are skipped).",
+    value=False,
+)
 strip_existing_ocr = st.sidebar.checkbox(
     "Strip existing OCR",
     help="Strip existing OCR text from the PDF and re-OCR.",
     value=False,
 )
-debug = st.sidebar.checkbox("Debug", help="Show debug information", value=False)
-disable_ocr_math = st.sidebar.checkbox(
-    "Disable math",
-    help="Disable math in OCR output - no inline math",
+keep_headers_footers = st.sidebar.checkbox(
+    "Show page headers/footers",
+    help="Keep running page headers and footers in the output instead of stripping them.",
     value=False,
 )
+debug = st.sidebar.checkbox("Debug", help="Show debug information", value=False)
 
 if not run_marker:
     st.stop()
@@ -128,11 +141,15 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             "output_format": output_format,
             "page_range": page_range,
             "force_ocr": force_ocr,
+            "disable_ocr": disable_ocr,
             "debug": debug,
             "output_dir": settings.DEBUG_DATA_FOLDER if debug else None,
             "use_llm": use_llm,
             "strip_existing_ocr": strip_existing_ocr,
-            "disable_ocr_math": disable_ocr_math,
+            "keep_pageheader_in_output": keep_headers_footers,
+            "keep_pagefooter_in_output": keep_headers_footers,
+            # "auto" -> leave unset so the converter picks by device.
+            "mode": None if mode == "auto" else mode,
         }
     )
     config_parser = ConfigParser(cli_options)

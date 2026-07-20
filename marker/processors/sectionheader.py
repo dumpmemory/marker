@@ -1,3 +1,4 @@
+import re
 import warnings
 from typing import Annotated, Dict, List
 
@@ -9,6 +10,8 @@ from marker.processors import BaseProcessor
 from marker.schema import BlockTypes
 from marker.schema.document import Document
 
+HEADING_TAG_PATTERN = re.compile(r"<h(\d)", re.IGNORECASE)
+
 # Ignore sklearn warning about not converging
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
@@ -17,7 +20,8 @@ class SectionHeaderProcessor(BaseProcessor):
     """
     A processor for recognizing section headers in the document.
     """
-    block_types = (BlockTypes.SectionHeader, )
+
+    block_types = (BlockTypes.SectionHeader,)
     level_count: Annotated[
         int,
         "The number of levels to use for headings.",
@@ -42,11 +46,20 @@ class SectionHeaderProcessor(BaseProcessor):
             for block in page.children:
                 if block.block_type not in self.block_types:
                     continue
-                if block.structure is not None:
+                if block.html:
+                    # OCR'd header - keep the model's heading level for the
+                    # section hierarchy
+                    match = HEADING_TAG_PATTERN.search(block.html)
+                    if match:
+                        block.heading_level = min(int(match.group(1)), 6)
+                    continue
+                if block.structure:
                     line_heights[block.id] = block.line_height(document)
                 else:
                     line_heights[block.id] = 0
-                    block.ignore_for_output = True  # Don't output an empty section header
+                    block.ignore_for_output = (
+                        True  # Don't output an empty section header
+                    )
 
         flat_line_heights = list(line_heights.values())
         heading_ranges = self.bucket_headings(flat_line_heights)
@@ -55,6 +68,8 @@ class SectionHeaderProcessor(BaseProcessor):
             # Iterate children to grab all section headers
             for block in page.children:
                 if block.block_type not in self.block_types:
+                    continue
+                if block.html:
                     continue
                 block_height = line_heights.get(block.id, 0)
                 if block_height > 0:
@@ -66,16 +81,21 @@ class SectionHeaderProcessor(BaseProcessor):
                 if block.heading_level is None:
                     block.heading_level = self.default_level
 
-    def bucket_headings(self, line_heights: List[float], num_levels=4):
+    def bucket_headings(self, line_heights: List[float]):
         if len(line_heights) <= self.level_count:
             return []
 
         data = np.asarray(line_heights).reshape(-1, 1)
-        labels = KMeans(n_clusters=num_levels, random_state=0, n_init="auto").fit_predict(data)
+        labels = KMeans(
+            n_clusters=self.level_count, random_state=0, n_init="auto"
+        ).fit_predict(data)
         data_labels = np.concatenate([data, labels.reshape(-1, 1)], axis=1)
         data_labels = np.sort(data_labels, axis=0)
 
-        cluster_means = {int(label): float(np.mean(data_labels[data_labels[:, 1] == label, 0])) for label in np.unique(labels)}
+        cluster_means = {
+            int(label): float(np.mean(data_labels[data_labels[:, 1] == label, 0]))
+            for label in np.unique(labels)
+        }
         label_max = None
         label_min = None
         heading_ranges = []

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from marker.schema.blocks.base import Block, BlockId, BlockOutput
+from marker.schema.blocks.bibliography import Bibliography
 from marker.schema.blocks.caption import Caption
+from marker.schema.blocks.chemicalblock import ChemicalBlock
+from marker.schema.blocks.diagram import Diagram
 from marker.schema.blocks.code import Code
 from marker.schema.blocks.figure import Figure
 from marker.schema.blocks.footnote import Footnote
@@ -20,3 +23,31 @@ from marker.schema.blocks.toc import TableOfContents
 from marker.schema.blocks.complexregion import ComplexRegion
 from marker.schema.blocks.tablecell import TableCell
 from marker.schema.blocks.reference import Reference
+
+__all__ = [
+    "Block",
+    "BlockId",
+    "BlockOutput",
+    "Bibliography",
+    "Caption",
+    "ChemicalBlock",
+    "Diagram",
+    "Code",
+    "Figure",
+    "Footnote",
+    "Form",
+    "Equation",
+    "Handwriting",
+    "InlineMath",
+    "ListItem",
+    "PageFooter",
+    "PageHeader",
+    "Picture",
+    "SectionHeader",
+    "Table",
+    "Text",
+    "TableOfContents",
+    "ComplexRegion",
+    "TableCell",
+    "Reference",
+]

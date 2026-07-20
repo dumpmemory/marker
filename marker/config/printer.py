@@ -26,8 +26,12 @@ class CustomClickPrinter(click.Command):
                         shared_attrs[attr] = {
                             "classes": [],
                             "type": attr_type,
+                            # Only default-False bools render as flags. None
+                            # defaults are tri-state (auto) - they need an
+                            # explicit true/false value to be overridable in
+                            # both directions.
                             "is_flag": attr_type in [bool, Optional[bool]]
-                            and not default,
+                            and default is False,
                             "metadata": metadata,
                             "default": default,
                         }
@@ -44,8 +48,13 @@ class CustomClickPrinter(click.Command):
             Optional[str],
         ]
 
-        # Add shared attribute options first
+        # Add shared attribute options first. Skip attrs the command already
+        # defines explicitly (e.g. --mode in common_options) - a duplicate
+        # click.Option would shadow the explicit one and warn.
+        existing_opts = {opt for param in ctx.command.params for opt in param.opts}
         for attr, info in shared_attrs.items():
+            if "--" + attr in existing_opts:
+                continue
             if info["type"] in attr_types:
                 ctx.command.params.append(
                     click.Option(
@@ -81,7 +90,9 @@ class CustomClickPrinter(click.Command):
                         )
 
                     if attr_type in attr_types:
-                        is_flag = attr_type in [bool, Optional[bool]] and not default
+                        is_flag = (
+                            attr_type in [bool, Optional[bool]] and default is False
+                        )
 
                         # Only add class-specific options
                         ctx.command.params.append(

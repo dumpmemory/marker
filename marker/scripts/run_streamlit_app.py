@@ -19,7 +19,3 @@ def streamlit_app_cli(app_name: str = "streamlit_app.py"):
     if argv:
         cmd += ["--"] + argv
     subprocess.run(cmd, env={**os.environ, "IN_STREAMLIT": "true"})
-
-
-def extraction_app_cli():
-    streamlit_app_cli("extraction_app.py")

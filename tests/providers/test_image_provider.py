@@ -1,7 +1,10 @@
+import pytest
+
 from marker.providers.image import ImageProvider
 from marker.renderers.markdown import MarkdownOutput
 
 
+@pytest.mark.cpu  # provider only, no models; the conversion test below needs the VLM
 def test_image_provider(config, temp_image):
     provider = ImageProvider(temp_image.name, config)
     assert len(provider) == 1
@@ -10,8 +13,7 @@ def test_image_provider(config, temp_image):
     page_lines = provider.get_page_lines(0)
     assert len(page_lines) == 0
 
+
 def test_image_provider_conversion(pdf_converter, temp_image):
     markdown_output: MarkdownOutput = pdf_converter(temp_image.name)
     assert "Hello, World!" in markdown_output.markdown
-
-

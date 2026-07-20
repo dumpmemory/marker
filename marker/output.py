@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup, Tag
 from pydantic import BaseModel
 from PIL import Image
 
-from marker.renderers.extraction import ExtractionOutput
+from marker.renderers import CONTENT_REF_RE
 from marker.renderers.html import HTMLOutput
 from marker.renderers.json import JSONOutput, JSONBlockOutput
 from marker.renderers.markdown import MarkdownOutput
@@ -24,24 +24,27 @@ def unwrap_outer_tag(html: str):
     return str(soup)
 
 
+def _splice_json_html(block: JSONBlockOutput | BlockOutput) -> str:
+    children = getattr(block, "children", None)
+    if not children:
+        return block.html
+    child_html = {str(child.id): _splice_json_html(child) for child in children}
+
+    def repl(match) -> str:
+        return child_html.get(match.group(1), match.group(0))
+
+    return CONTENT_REF_RE.sub(repl, block.html)
+
+
 def json_to_html(block: JSONBlockOutput | BlockOutput):
     # Utility function to take in json block output and give html for the block.
-    if not getattr(block, "children", None):
+    # Resolves <content-ref> placeholders by string substitution (fast, no
+    # per-node BeautifulSoup re-parse; this runs per block inside the LLM
+    # processor loops), then normalizes once. Output matches the prior version.
+    children = getattr(block, "children", None)
+    if not children:
         return block.html
-    else:
-        child_html = [json_to_html(child) for child in block.children]
-        child_ids = [child.id for child in block.children]
-
-        soup = BeautifulSoup(block.html, "html.parser")
-        content_refs = soup.find_all("content-ref")
-        for ref in content_refs:
-            src_id = ref.attrs["src"]
-            if src_id in child_ids:
-                child_soup = BeautifulSoup(
-                    child_html[child_ids.index(src_id)], "html.parser"
-                )
-                ref.replace_with(child_soup)
-        return str(soup)
+    return str(BeautifulSoup(_splice_json_html(block), "html.parser"))
 
 
 def output_exists(output_dir: str, fname_base: str):
@@ -65,8 +68,6 @@ def text_from_rendered(rendered: BaseModel):
         return rendered.model_dump_json(exclude=["metadata"], indent=2), "json", {}
     elif isinstance(rendered, OCRJSONOutput):
         return rendered.model_dump_json(exclude=["metadata"], indent=2), "json", {}
-    elif isinstance(rendered, ExtractionOutput):
-        return rendered.document_json, "json", {}
     else:
         raise ValueError("Invalid output type")
 

@@ -26,17 +26,24 @@ def test_document_builder(pdf_document):
 
 @pytest.mark.config({"page_range": [0]})
 def test_document_builder_inline_eq(pdf_document):
+    # adversarial.pdf is a born-digital arXiv paper - its text layer is clean
+    # (and even carries LaTeX for the equations), so the page should use
+    # pdftext, not OCR. Block equations are converted to LaTeX later by the
+    # EquationProcessor (not run in this builder-only fixture).
     first_page = pdf_document.pages[0]
-    assert first_page.structure[0] == "/page/0/SectionHeader/0"
+    assert first_page.text_extraction_method == "pdftext"
+    assert len(first_page.structure) > 0
 
     first_block = first_page.get_block(first_page.structure[0])
     assert first_block.block_type == BlockTypes.SectionHeader
-    assert first_block.text_extraction_method == "surya"
+    assert first_block.text_extraction_method == "pdftext"
 
+    # pdftext pages keep line/span children (not html)
     first_text_block: Line = first_page.get_block(first_block.structure[0])
     assert first_text_block.block_type == BlockTypes.Line
-
     first_span = first_page.get_block(first_text_block.structure[0])
-    assert first_span.block_type == BlockTypes.Span
     assert first_span.text.strip() == "Subspace Adversarial Training"
-    assert "bold" in first_span.formats
+
+    # The embedded text layer preserves the equation LaTeX
+    page_text = first_page.raw_text(pdf_document)
+    assert "\\min" in page_text

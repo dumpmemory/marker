@@ -3,8 +3,11 @@ from importlib import import_module
 
 from marker.schema import BlockTypes
 from marker.schema.blocks import (
+    Bibliography,
     Block,
     Caption,
+    ChemicalBlock,
+    Diagram,
     Code,
     Equation,
     Figure,
@@ -76,6 +79,9 @@ register_block_class(BlockTypes.TableOfContents, TableOfContents)
 register_block_class(BlockTypes.ComplexRegion, ComplexRegion)
 register_block_class(BlockTypes.TableCell, TableCell)
 register_block_class(BlockTypes.Reference, Reference)
+register_block_class(BlockTypes.Bibliography, Bibliography)
+register_block_class(BlockTypes.ChemicalBlock, ChemicalBlock)
+register_block_class(BlockTypes.Diagram, Diagram)
 register_block_class(BlockTypes.Document, Document)
 
 assert len(BLOCK_REGISTRY) == len(BlockTypes)

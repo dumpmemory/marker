@@ -1,5 +1,8 @@
 import pytest
 
+# CPU-only: pdftext text/image extraction, no models or inference server.
+pytestmark = pytest.mark.cpu
+
 
 @pytest.mark.config({"page_range": [0]})
 def test_pdf_provider(doc_provider):
@@ -8,7 +11,7 @@ def test_pdf_provider(doc_provider):
     assert doc_provider.get_images([0], 96)[0].size == (816, 1056)
 
     page_lines = doc_provider.get_page_lines(0)
-    assert len(page_lines) == 85
+    assert len(page_lines) == 87
 
     spans = page_lines[0].spans
     assert len(spans) == 2

@@ -1,15 +1,11 @@
-import ast
 import base64
 import io
-import re
 import sys
-from typing import Optional
 
 from PIL import Image
 import click
 import pypdfium2
 import streamlit as st
-from pydantic import BaseModel
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from marker.config.parser import ConfigParser
@@ -85,96 +81,3 @@ def page_count(pdf_file: UploadedFile):
         return len(doc) - 1
     else:
         return 1
-
-
-def pillow_image_to_base64_string(img: Image) -> str:
-    buffered = io.BytesIO()
-    img.save(buffered, format="JPEG")
-    return base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-
-def extract_root_pydantic_class(schema_code: str) -> Optional[str]:
-    try:
-        # Parse the code into an AST
-        tree = ast.parse(schema_code)
-
-        # Find all class definitions that inherit from BaseModel
-        class_names = set()
-        class_info = {}  # Store information about each class
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                # Check if this class inherits from BaseModel
-                is_pydantic = False
-                for base in node.bases:
-                    if isinstance(base, ast.Name) and base.id == "BaseModel":
-                        is_pydantic = True
-                        break
-
-                if is_pydantic:
-                    class_names.add(node.name)
-                    class_info[node.name] = {
-                        "references": set(),  # Classes this class references
-                        "fields": [],  # Field names in this class
-                    }
-
-                    # Extract field information
-                    for item in node.body:
-                        if isinstance(item, ast.AnnAssign) and isinstance(
-                            item.target, ast.Name
-                        ):
-                            field_name = item.target.id
-                            class_info[node.name]["fields"].append(field_name)
-
-                            # Check if this field references another class
-                            annotation_str = ast.unparse(item.annotation)
-
-                            # Look for List[ClassName], Optional[ClassName], Dict[Any, ClassName], etc.
-                            for other_class in class_names:
-                                pattern = rf"(?:List|Dict|Set|Tuple|Optional|Union)?\[.*{other_class}.*\]|{other_class}"
-                                if re.search(pattern, annotation_str):
-                                    class_info[node.name]["references"].add(other_class)
-
-        if len(class_names) == 1:
-            return list(class_names)[0]
-
-        referenced_classes = set()
-        for class_name, info in class_info.items():
-            referenced_classes.update(info["references"])
-
-        # Find classes that reference others but aren't referenced themselves (potential roots)
-        root_candidates = set()
-        for class_name, info in class_info.items():
-            if info["references"] and class_name not in referenced_classes:
-                root_candidates.add(class_name)
-
-        # If we found exactly one root candidate, return it
-        if len(root_candidates) == 1:
-            return list(root_candidates)[0]
-
-        return None
-    except Exception as e:
-        print(f"Error parsing schema: {e}")
-        return None
-
-
-def get_root_class(schema_code: str) -> Optional[BaseModel]:
-    root_class_name = extract_root_pydantic_class(schema_code)
-
-    if not root_class_name:
-        return None
-
-    if "from pydantic" not in schema_code:
-        schema_code = "from pydantic import BaseModel\n" + schema_code
-    if "from typing" not in schema_code:
-        schema_code = (
-            "from typing import List, Dict, Optional, Set, Tuple, Union, Any\n\n"
-            + schema_code
-        )
-
-    # Execute the code in a new namespace
-    namespace = {}
-    exec(schema_code, namespace)
-
-    # Return the root class object
-    return namespace.get(root_class_name)
