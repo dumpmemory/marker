@@ -447,7 +447,7 @@ We measure conversion quality with [olmocr-bench](https://github.com/allenai/olm
 
 ### Competitive comparison
 
-Quality vs. throughput on the full bench — up (higher score) and right (faster) is better.  Marker (this repo) beats **both** MinerU and docling on score *and* throughput at once: balanced matches Gemini/MinerU quality while running ~10× more pages/sec than MinerU, and fast trades a little quality for a big speedup.
+Quality vs. throughput on the full bench — up (higher score) and right (faster) is better.  Marker (this repo) beats **both** MinerU and docling on score *and* throughput at once: balanced matches Gemini/MinerU quality while running ~5× more pages/sec than MinerU, and fast trades a little quality for a big speedup.
 
 <img src="data/images/olmocr_bench.png" width="800px"/>
 
