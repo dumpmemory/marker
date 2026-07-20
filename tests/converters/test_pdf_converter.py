@@ -45,8 +45,12 @@ def test_xlsx_converter(pdf_converter: PdfConverter, temp_doc):
     assert "four" in markdown
 
 
+# No page_range: weasyprint paginates HTML differently depending on the fonts
+# available on the host, so a fixed page number lands on different content across
+# machines. disable_ocr reads the born-digital text layer directly - deterministic
+# and fast, with no OCR-backend or mode dependence.
 @pytest.mark.filename("china.html")
-@pytest.mark.config({"page_range": [11], "mode": "balanced"})
+@pytest.mark.config({"disable_ocr": True})
 def test_html_converter(pdf_converter: PdfConverter, temp_doc):
     markdown_output: MarkdownOutput = pdf_converter(temp_doc.name)
     markdown = markdown_output.markdown
