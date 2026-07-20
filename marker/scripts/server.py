@@ -85,11 +85,11 @@ class CommonParams(BaseModel):
         ),
     ] = "markdown"
     mode: Annotated[
-        str,
+        Optional[str],
         Field(
-            description="Conversion mode: 'balanced' (VLM layout, highest quality) or 'fast' (CPU layout, minimal VLM use). Defaults to 'balanced'."
+            description="Conversion mode: 'balanced' (VLM layout, highest quality) or 'fast' (CPU layout, minimal VLM use). Defaults by device: 'balanced' on GPU, 'fast' on CPU/MPS."
         ),
-    ] = "balanced"
+    ] = None
 
 
 async def _convert_pdf(params: CommonParams):
@@ -144,7 +144,7 @@ async def convert_pdf(params: CommonParams):
 @app.post("/marker/upload")
 async def convert_pdf_upload(
     page_range: Optional[str] = Form(default=None),
-    mode: Optional[str] = Form(default="balanced"),
+    mode: Optional[str] = Form(default=None),
     force_ocr: Optional[bool] = Form(default=False),
     paginate_output: Optional[bool] = Form(default=False),
     output_format: Optional[str] = Form(default="markdown"),

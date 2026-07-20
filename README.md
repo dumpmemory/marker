@@ -88,7 +88,7 @@ pip install marker-pdf[full]
 
 First, some configuration:
 
-- **Mode** (`--mode balanced|fast`, default `balanced`):
+- **Mode** (`--mode balanced|fast`; defaults by device — `balanced` on GPU, `fast` on CPU/MPS):
   - `balanced` (best on a **GPU**) uses the surya VLM for layout, OCRs inline math, and re-OCRs the **whole page** whenever any of its embedded text is bad — highest quality.
   - `fast` (optimized for **CPU**) uses the lightweight rf-detr layout detector, extracts text with pdftext, and keeps VLM use minimal: equations, surgical block-level repair of individual garbled/empty blocks, and a single full-page pass only for pages that are scanned or mostly bad. A clean digital document without equations never starts the VLM server.
   - Tables are reconstructed from the PDF text layer in both modes (scanned tables come from the full-page OCR); low-confidence reconstructions fall back to the VLM, with a stricter bar in balanced.
@@ -116,7 +116,7 @@ marker_single /path/to/file.pdf
 You can pass in PDFs or images.
 
 Options:
-- `--mode [balanced|fast]`: Conversion mode (see above).  Defaults to `balanced`.
+- `--mode [balanced|fast]`: Conversion mode (see above).  Defaults by device: `balanced` on GPU, `fast` on CPU/MPS.
 - `--disable_ocr`: Never call the VLM - pure text-layer extraction (equations and scanned pages are skipped).
 - `--page_range TEXT`: Specify which pages to process. Accepts comma-separated page numbers and ranges. Example: `--page_range "0,5-10,20"` will process pages 0, 5 through 10, and page 20.
 - `--output_format [markdown|json|html|chunks]`: Specify the format for the output results.

@@ -98,9 +98,10 @@ output_format = st.sidebar.selectbox(
 )
 mode = st.sidebar.selectbox(
     "Mode",
-    ["balanced", "fast"],
+    ["auto", "balanced", "fast"],
     index=0,
-    help="'balanced' uses the VLM layout model + full-page OCR (best on GPU). "
+    help="'auto' picks by device: balanced on GPU, fast on CPU/MPS. "
+    "'balanced' uses the VLM layout model + full-page OCR (best on GPU). "
     "'fast' uses lightweight CPU detectors and only OCRs garbled/empty content.",
 )
 run_marker = st.sidebar.button("Run Marker")
@@ -140,7 +141,8 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             "output_dir": settings.DEBUG_DATA_FOLDER if debug else None,
             "use_llm": use_llm,
             "strip_existing_ocr": strip_existing_ocr,
-            "mode": mode,
+            # "auto" -> leave unset so the converter picks by device.
+            "mode": None if mode == "auto" else mode,
         }
     )
     config_parser = ConfigParser(cli_options)

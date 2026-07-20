@@ -25,8 +25,9 @@ class LayoutBuilder(BaseBuilder):
 
     mode: Annotated[
         str,
-        "Conversion mode: 'balanced' (default, GPU) uses the VLM layout model;",
+        "Conversion mode: 'balanced' (GPU) uses the VLM layout model;",
         "'fast' (CPU) uses the lightweight rf-detr/onnx layout detector.",
+        "The converter defaults this by device (balanced on GPU, fast on CPU/MPS).",
     ] = "balanced"
     disable_ocr: Annotated[
         bool,

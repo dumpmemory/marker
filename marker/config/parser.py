@@ -85,9 +85,10 @@ class ConfigParser:
             "--mode",
             type=click.Choice(["balanced", "fast"]),
             default=None,
-            help="Conversion mode. 'balanced' (default) uses the VLM layout model "
-            "+ full-page OCR (best on GPU). 'fast' uses lightweight CPU detectors "
-            "for layout/tables and only block-OCRs garbled/empty content.",
+            help="Conversion mode. 'balanced' uses the VLM layout model + full-page "
+            "OCR (best on GPU). 'fast' uses lightweight CPU detectors for layout/tables "
+            "and only block-OCRs garbled/empty content. Default by device: balanced on "
+            "GPU, fast on CPU/MPS.",
         )(fn)
         return fn
 
